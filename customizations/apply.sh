@@ -174,7 +174,8 @@ else:
                 shutil.copyfileobj(src, out)
         print("  OK: Downloaded and extracted native libraries successfully")
     except Exception as e:
-        print(f"  WARN: Failed to download native libraries: {e}")
+        print(f"  ERR: Failed to download native libraries: {e}")
+        raise
 
 # Also ensure cacert.pem is copied to assets
 local_cacert = os.path.join(mtsflix_dir, 'customizations/assets/cacert.pem')
