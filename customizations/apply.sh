@@ -1,115 +1,202 @@
 #!/bin/bash
 # ==============================================================
-#  MTSFlix Customization Script v3.1 (Fresh Minimal Rebuild)
-#  Patches CloudStream 3 → MTSFlix
+#  MTSFlix Customization Script v4.2 (Hidden Extensions & Silent Background Download)
+#  Patches CloudStream 3 → PENCARIMOVIE (Built-in Rust Engine & Sole Provider)
 # ==============================================================
 set -e
+
+# Detect working Python binary (Linux/CI: python3, Windows: python)
+PYTHON_BIN="python3"
+if ! python3 -c "import sys" 2>/dev/null; then
+  if python -c "import sys" 2>/dev/null; then
+    PYTHON_BIN="python"
+  elif [ -f "/c/Python311/python.exe" ]; then
+    PYTHON_BIN="/c/Python311/python.exe"
+  fi
+fi
+export PYTHON_BIN
 
 MTSFLIX_DIR="${MTSFLIX_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 CS_DIR="${CS_DIR:-$(pwd)/cloudstream}"
 
 [ ! -d "$CS_DIR" ] && { echo "ERROR: CloudStream dir not found: $CS_DIR"; exit 1; }
 
-# --- 1. Change applicationId -----------------------------------------------
-echo "[1/12] Changing applicationId to com.mts.mtsflix..."
-APP_BUILD="$CS_DIR/app/build.gradle.kts"
-if [ -f "$APP_BUILD" ]; then
-  sed -i 's|applicationId = "com\.lagradost\.cloudstream3"|applicationId = "com.mts.mtsflix"|g' "$APP_BUILD"
-  echo "  OK: applicationId = com.mts.mtsflix"
-fi
+# --- 1. Change applicationId and strip prerelease suffixes ----------------
+echo "[1/12] Patching build.gradle.kts to set applicationId com.mts.mtsflix and remove suffixes..."
+$PYTHON_BIN - << 'PYEOF'
+import os, re, json
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+mtsflix_dir = os.environ.get('MTSFLIX_DIR','.')
+
+# Read MTSFlix version — priority: VER env variable (set by workflow) > version.json
+ver = os.environ.get('VER', '')
+if not ver:
+    try:
+        vj = json.load(open(mtsflix_dir + '/version.json'))
+        ver = vj.get('version', '1.0.9')
+    except:
+        ver = '1.0.9'
+print(f"  INFO: Building with versionName = {ver}")
+
+# 1a. Patch build.gradle.kts: applicationId, strip suffixes
+app_build = cs_dir + '/app/build.gradle.kts'
+if os.path.exists(app_build):
+    c = open(app_build, encoding='utf-8').read()
+    c = re.sub(r'applicationId\s*=\s*"com\.lagradost\.cloudstream3"', 'applicationId = "com.mts.mtsflix"', c)
+    c = re.sub(r'applicationIdSuffix\s*=\s*"\.(prerelease|debug)"', 'applicationIdSuffix = ""', c)
+    c = re.sub(r'versionNameSuffix\s*=\s*"-PRE"', 'versionNameSuffix = ""', c)
+    open(app_build, 'w', encoding='utf-8').write(c)
+    print(f"  OK: build.gradle.kts patched with clean applicationId com.mts.mtsflix")
+
+# 1b. Patch libs.versions.toml: set versionName = MTSFlix version
+# This is CRITICAL for InAppUpdater to show update popup correctly!
+toml_path = cs_dir + '/gradle/libs.versions.toml'
+if os.path.exists(toml_path):
+    tc = open(toml_path, encoding='utf-8').read()
+    tc = re.sub(r'versionName\s*=\s*"[^"]*"', f'versionName = "{ver}"', tc)
+    open(toml_path, 'w', encoding='utf-8').write(tc)
+    print(f"  OK: libs.versions.toml versionName set to {ver} (matches GitHub release tag)")
+PYEOF
 
 # --- 2. Change App Name ----------------------------------------------------
-echo "[2/12] Setting app name to MTSFlix in all localized resources..."
-python3 - << 'PYEOF'
+echo "[2/12] Setting app name to PENCARIMOVIE in all localized resources & flavor directories..."
+$PYTHON_BIN - << 'PYEOF'
 import os, re
 cs_dir = os.environ.get('CS_DIR','cloudstream')
-res_dir = cs_dir + '/app/src/main/res'
-if not os.path.exists(res_dir):
-    print("  WARN: res directory not found")
-else:
-    count = 0
-    for root, dirs, files in os.walk(res_dir):
-        for f in files:
-            if f == 'strings.xml':
-                path = os.path.join(root, f)
-                try:
-                    c = open(path, encoding='utf-8').read()
-                    pattern = r'<string name="app_name">[^<]*</string>'
-                    new_c = re.sub(pattern, '<string name="app_name">MTSFlix</string>', c)
-                    if new_c != c:
-                        open(path, 'w', encoding='utf-8').write(new_c)
-                        count += 1
-                except Exception as e:
-                    print(f"  Error patching {path}: {e}")
-    print(f"  OK: Patched {count} strings.xml files to MTSFlix")
+res_dirs = [
+    cs_dir + '/app/src/main/res',
+    cs_dir + '/app/src/prerelease/res',
+    cs_dir + '/app/src/stable/res'
+]
+count = 0
+for res_dir in res_dirs:
+    if os.path.exists(res_dir):
+        for root, dirs, files in os.walk(res_dir):
+            for f in files:
+                if f == 'strings.xml':
+                    path = os.path.join(root, f)
+                    try:
+                        c = open(path, encoding='utf-8').read()
+                        pattern = r'<string name="app_name">[^<]*</string>'
+                        new_c = re.sub(pattern, '<string name="app_name">PENCARIMOVIE</string>', c)
+                        if new_c != c:
+                            open(path, 'w', encoding='utf-8').write(new_c)
+                            count += 1
+                    except Exception as e:
+                        print(f"  Error patching {path}: {e}")
+print(f"  OK: Patched {count} strings.xml files to MTSFlix")
 PYEOF
 
 # --- 3. Copy Custom Assets (Logo, Banner) ----------------------------------
 echo "[3/12] Copying custom logo and banner (rebranding all icons/drawables)..."
 if [ -f "$MTSFLIX_DIR/logo.png" ]; then
-  # 1. Clean up and replace launcher icons & foreground
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher.png" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher.webp" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher.xml" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher_round.png" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher_round.webp" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher_round.xml" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher_foreground.xml" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_launcher_foreground.png" -delete
-  
-  for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-    mkdir -p "$CS_DIR/app/src/main/res/mipmap-$density"
-    cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/mipmap-$density/ic_launcher.png"
-    cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/mipmap-$density/ic_launcher_round.png"
-  done
+  for target_res in "$CS_DIR/app/src/main/res" "$CS_DIR/app/src/prerelease/res" "$CS_DIR/app/src/stable/res"; do
+    if [ -d "$target_res" ]; then
+      find "$target_res" -name "ic_launcher*.png" -delete
+      find "$target_res" -name "ic_launcher*.webp" -delete
+      find "$target_res" -name "ic_launcher*.xml" -delete
+      find "$target_res" -name "ic_cloudstream*.xml" -delete
+      find "$target_res" -name "ic_cloudstream*.png" -delete
 
-  # 2. Clean up and replace all CloudStream logos and TV logos
-  find "$CS_DIR/app/src/main/res" -name "ic_cloudstream*.xml" -delete
-  find "$CS_DIR/app/src/main/res" -name "ic_cloudstream*.png" -delete
-  
-  # Copy logo as PNG to fallback drawables
-  mkdir -p "$CS_DIR/app/src/main/res/drawable"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_launcher_foreground.png"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_cloudstream_monochrome.png"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_cloudstream_monochrome_big.png"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_cloudstreamlogotv.png"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_cloudstreamlogotv_2.png"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_cloudstreamlogotv_pre.png"
-  cp "$MTSFLIX_DIR/logo.png" "$CS_DIR/app/src/main/res/drawable/ic_cloudstreamlogotv_pre_2.png"
-  
-  echo "  OK: logo.png replaced launcher icons, foregrounds, monochromes and TV logos"
+      for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+        mkdir -p "$target_res/mipmap-$density"
+        cp "$MTSFLIX_DIR/logo.png" "$target_res/mipmap-$density/ic_launcher.png"
+        cp "$MTSFLIX_DIR/logo.png" "$target_res/mipmap-$density/ic_launcher_round.png"
+      done
+
+      mkdir -p "$target_res/drawable"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_launcher_foreground.png"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_cloudstream_monochrome.png"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_cloudstream_monochrome_big.png"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_cloudstreamlogotv.png"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_cloudstreamlogotv_2.png"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_cloudstreamlogotv_pre.png"
+      cp "$MTSFLIX_DIR/logo.png" "$target_res/drawable/ic_cloudstreamlogotv_pre_2.png"
+    fi
+  done
+  echo "  OK: logo.png replaced launcher icons in all flavor directories"
 else
   echo "  WARN: logo.png not found at root"
 fi
 
 if [ -f "$MTSFLIX_DIR/banner.png" ]; then
-  # 3. Clean up and replace all banners
-  find "$CS_DIR/app/src/main/res" -name "ic_banner*" -delete
-  
-  for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-    mkdir -p "$CS_DIR/app/src/main/res/mipmap-$density"
-    cp "$MTSFLIX_DIR/banner.png" "$CS_DIR/app/src/main/res/mipmap-$density/ic_banner.png"
+  for target_res in "$CS_DIR/app/src/main/res" "$CS_DIR/app/src/prerelease/res" "$CS_DIR/app/src/stable/res"; do
+    if [ -d "$target_res" ]; then
+      find "$target_res" -name "ic_banner*" -delete
+      for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+        mkdir -p "$target_res/mipmap-$density"
+        cp "$MTSFLIX_DIR/banner.png" "$target_res/mipmap-$density/ic_banner.png"
+      done
+    fi
   done
   echo "  OK: banner.png replaced launcher banners"
 else
   echo "  WARN: banner.png not found at root"
 fi
 
-# --- 4. Patch RepositoryManager.kt for legacy MD5 verification fallback ---
-echo "[4/12] Patching RepositoryManager.kt to add legacy MD5 hash validation fallback & ensure permanent MTS Repo..."
-python3 - << 'PYEOF'
+
+# --- 3b. Setup PencariMovie Native Libraries (Rust Streaming Engine Port 8088) ---
+echo "[3b/12] Installing PencariMovie Rust engine & cloudflared binaries (jniLibs)..."
+$PYTHON_BIN - << 'PYEOF'
+import os, shutil, zipfile, io, urllib.request
+
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+mtsflix_dir = os.environ.get('MTSFLIX_DIR','.')
+dest_jni = os.path.join(cs_dir, 'app/src/main/jniLibs')
+local_jni = os.path.join(mtsflix_dir, 'customizations/jniLibs')
+
+# 1. Copy from local jniLibs if available
+if os.path.exists(local_jni) and os.path.exists(os.path.join(local_jni, 'armeabi-v7a/libpencarimovie_rust.so')):
+    shutil.copytree(local_jni, dest_jni, dirs_exist_ok=True)
+    print("  OK: Copied native libraries from local customizations/jniLibs")
+else:
+    # 2. Download from official companion release if missing (e.g. CI fresh clone)
+    print("  INFO: Downloading native engine from release...")
+    try:
+        url = "https://github.com/aiskendi/pencarimovie-server/releases/download/apk-server-latest/pencarimovie-server_release_universal.apk"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = resp.read()
+        z = zipfile.ZipFile(io.BytesIO(data))
+        for item in z.infolist():
+            if item.filename.startswith('lib/'):
+                parts = item.filename.split('/')
+                if len(parts) >= 3:
+                    abi, fname = parts[1], parts[2]
+                    abi_dir = os.path.join(dest_jni, abi)
+                    os.makedirs(abi_dir, exist_ok=True)
+                    with z.open(item) as src, open(os.path.join(abi_dir, fname), 'wb') as out:
+                        shutil.copyfileobj(src, out)
+        if 'assets/cacert.pem' in z.namelist():
+            asset_dir = os.path.join(cs_dir, 'app/src/main/assets')
+            os.makedirs(asset_dir, exist_ok=True)
+            with z.open('assets/cacert.pem') as src, open(os.path.join(asset_dir, 'cacert.pem'), 'wb') as out:
+                shutil.copyfileobj(src, out)
+        print("  OK: Downloaded and extracted native libraries successfully")
+    except Exception as e:
+        print(f"  WARN: Failed to download native libraries: {e}")
+
+# Also ensure cacert.pem is copied to assets
+local_cacert = os.path.join(mtsflix_dir, 'customizations/assets/cacert.pem')
+if os.path.exists(local_cacert):
+    asset_dir = os.path.join(cs_dir, 'app/src/main/assets')
+    os.makedirs(asset_dir, exist_ok=True)
+    shutil.copy2(local_cacert, os.path.join(asset_dir, 'cacert.pem'))
+    print("  OK: cacert.pem copied to assets")
+PYEOF
+
+# --- 4. Patch RepositoryManager.kt & DataStoreHelper.kt --------------------
+echo "[4/12] Patching RepositoryManager.kt & DataStoreHelper.kt for instant cloud sync..."
+$PYTHON_BIN - << 'PYEOF'
 import os, re
 cs_dir = os.environ.get('CS_DIR','cloudstream')
-repo_mgr_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/plugins/RepositoryManager.kt'
 
-if not os.path.exists(repo_mgr_path):
-    print("  WARN: RepositoryManager.kt not found, skipping patch")
-else:
-    print("  Patching RepositoryManager.kt...")
+# 1. RepositoryManager.kt
+repo_mgr_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/plugins/RepositoryManager.kt'
+if os.path.exists(repo_mgr_path):
     content = open(repo_mgr_path, encoding='utf-8').read()
     changed = False
     
-    # 1. Inject md5 helper function below sha256 function
     sha256_end = '        return "sha256-" + digest.digest().joinToString("") { "%02x".format(it) }\n    }'
     md5_func = '''        return "sha256-" + digest.digest().joinToString("") { "%02x".format(it) }
     }
@@ -131,9 +218,7 @@ else:
     if sha256_end in content and 'fun md5(' not in content:
         content = content.replace(sha256_end, md5_func)
         changed = True
-        print("  OK: md5 helper function injected")
         
-    # 2. Inject verification fallback check
     verify_target = '''            if (expectedFileHash != null) {
                 val downloadHash = sha256(tempFile)
                 if (expectedFileHash != downloadHash) {
@@ -156,30 +241,19 @@ else:
     if verify_target in content:
         content = content.replace(verify_target, verify_replacement)
         changed = True
-        print("  OK: md5 verification check injected")
 
-    # 3. Intercept getRepositories() to make sure MTS Repo is ALWAYS returned
     get_repos_target = '''    fun getRepositories(): Array<RepositoryData> {
         return getKey(REPOSITORIES_KEY) ?: emptyArray()
     }'''
     
     get_repos_replacement = '''    fun getRepositories(): Array<RepositoryData> {
-        val repoUrl = "https://cdn.jsdelivr.net/gh/muhamadakmal854-svg/Provider@builds/repo.json"
-        val repoName = "MTS Repo"
-        val list = getKey<Array<RepositoryData>>(REPOSITORIES_KEY) ?: emptyArray()
-        if (list.none { it.url == repoUrl }) {
-            val newRepo = RepositoryData(null, repoName, repoUrl)
-            return list + newRepo
-        }
-        return list
+        return emptyArray()
     }'''
     
     if get_repos_target in content:
         content = content.replace(get_repos_target, get_repos_replacement)
         changed = True
-        print("  OK: getRepositories intercepted to enforce MTS Repo")
 
-    # 4. Intercept removeRepository() to prevent deletion of MTS Repo
     remove_repo_target = '''    suspend fun removeRepository(context: Context, repository: RepositoryData) {
         val extensionsDir = File(context.filesDir, ONLINE_PLUGINS_FOLDER)'''
         
@@ -190,211 +264,396 @@ else:
     if remove_repo_target in content:
         content = content.replace(remove_repo_target, remove_repo_replacement)
         changed = True
-        print("  OK: removeRepository intercepted to protect MTS Repo")
         
     if changed:
         open(repo_mgr_path, 'w', encoding='utf-8').write(content)
         print("  OK: RepositoryManager.kt patched successfully")
+
+# 2. DataStoreHelper.kt (Auto sync history to cloud on every video watch & resume position change)
+dsh_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/utils/DataStoreHelper.kt'
+if os.path.exists(dsh_path):
+    c = open(dsh_path, encoding='utf-8').read()
+    changed_dsh = False
+
+    # CRITICAL: Use plain Thread{}.start() to avoid NetworkOnMainThreadException
+    # Cannot use GlobalScope.launch here as DataStoreHelper may not have coroutine scope import
+    CLOUD_SYNC_CALL = '''try {
+            Thread { context?.let { com.mts.mtsflix.cloud.MTSFlixCloudSync.saveWatchHistory(it) } }.start()
+        } catch (e: Exception) {}'''
+
+    # Hook 1: setLastWatched (Continue Watching row)
+    t_lw = 'isFromDownload\n            )\n        )'
+    r_lw = '''isFromDownload
+            )
+        )
+        ''' + CLOUD_SYNC_CALL
+    if t_lw in c and 'saveWatchHistory' not in c:
+        c = c.replace(t_lw, r_lw, 1)
+        changed_dsh = True
+
+    # Also update existing saveWatchHistory calls to be on background thread (fix NetworkOnMainThreadException)
+    OLD_SYNC = 'try {\n            context?.let { com.mts.mtsflix.cloud.MTSFlixCloudSync.saveWatchHistory(it) }\n        } catch (e: Exception) {}'
+    if OLD_SYNC in c:
+        c = c.replace(OLD_SYNC, CLOUD_SYNC_CALL)
+        changed_dsh = True
+
+    # Hook 2: setViewPos (video seek position = evidence of watching)
+    t_vp = 'setKey("$currentAccount/$VIDEO_POS_DUR", id.toString(), PosDur(pos, dur))'
+    r_vp = 'setKey("$currentAccount/$VIDEO_POS_DUR", id.toString(), PosDur(pos, dur))\n        ' + CLOUD_SYNC_CALL
+    if t_vp in c and 'VIDEO_POS_DUR' in c:
+        # Only replace in setViewPos function, check it's not already there
+        if c.count(CLOUD_SYNC_CALL) < 2:
+            c = c.replace(t_vp, r_vp, 1)
+            changed_dsh = True
+
+    # Hook 3: setBookmarkedData (Watching, Completed, On-Hold, Dropped, Plan To Watch, Favorites)
+    t_bk = 'setKey("$currentAccount/$RESULT_WATCH_STATE_DATA", id.toString(), data)'
+    r_bk = 'setKey("$currentAccount/$RESULT_WATCH_STATE_DATA", id.toString(), data)\n        ' + CLOUD_SYNC_CALL
+    if t_bk in c:
+        c = c.replace(t_bk, r_bk, 1)
+        changed_dsh = True
+
+    # Hook 4: setWatchState (Watching, Completed, On-Hold, Dropped, Plan to Watch)
+    t_ws = 'setKey("$currentAccount/$RESULT_WATCH_STATE", id.toString(), state)'
+    r_ws = 'setKey("$currentAccount/$RESULT_WATCH_STATE", id.toString(), state)\n        ' + CLOUD_SYNC_CALL
+    if t_ws in c:
+        c = c.replace(t_ws, r_ws, 1)
+        changed_dsh = True
+
+    if changed_dsh:
+        open(dsh_path, 'w', encoding='utf-8').write(c)
+        print("  OK: DataStoreHelper.kt patched for background cloud sync on playback & bookmarks")
     else:
-        print("  INFO: RepositoryManager.kt already patched or targets not found")
+        print("  SKIP: DataStoreHelper.kt already patched")
 PYEOF
 
-# --- 5. Patch MainActivity.kt for permanent repo & setup wizard bypass ---
-echo "[5/12] Patching MainActivity.kt for permanent repo..."
-python3 - << 'PYEOF'
+# --- 5. Patch MainActivity.kt, SetupFragmentExtensions.kt & SetupFragmentLanguage.kt ---
+echo "[5/12] Patching setup fragments to FORCE BYPASS Extensions screen & silent background download..."
+$PYTHON_BIN - << 'PYEOF'
 import os, re
 cs_dir = os.environ.get('CS_DIR','cloudstream')
-main_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/MainActivity.kt'
 
-if not os.path.exists(main_path):
-    print("  WARN: MainActivity.kt not found, skipping patch")
-else:
-    print("  Patching MainActivity.kt...")
-    content = open(main_path, encoding='utf-8').read()
+# 1. SetupFragmentExtensions.kt
+ext_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/setup/SetupFragmentExtensions.kt'
+if os.path.exists(ext_path):
+    c1 = open(ext_path, encoding='utf-8').read()
+    t1 = r'override fun onBindingCreated\(binding: FragmentSetupExtensionsBinding\) \{'
+    r1 = '''override fun onBindingCreated(binding: FragmentSetupExtensionsBinding) {
+        safe {
+            findNavController().navigate(R.id.navigation_home)
+            return@safe
+        }'''
+    if 'return@safe' not in c1:
+        c1 = re.sub(t1, r1, c1, count=1)
+        open(ext_path, 'w', encoding='utf-8').write(c1)
+        print("  OK: Patched SetupFragmentExtensions.kt")
+
+# 2. SetupFragmentLanguage.kt
+lang_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/setup/SetupFragmentLanguage.kt'
+if os.path.exists(lang_path):
+    c2 = open(lang_path, encoding='utf-8').read()
+    t2 = r'override fun onBindingCreated\(binding: FragmentSetupLanguageBinding\) \{'
+    r2 = '''override fun onBindingCreated(binding: FragmentSetupLanguageBinding) {
+        safe {
+            setKey(HAS_DONE_SETUP_KEY, true)
+            findNavController().navigate(R.id.navigation_home)
+            return@safe
+        }'''
+    if 'return@safe' not in c2:
+        c2 = re.sub(t2, r2, c2, count=1)
+        open(lang_path, 'w', encoding='utf-8').write(c2)
+        print("  OK: Patched SetupFragmentLanguage.kt")
+
+# 3. MainActivity.kt (Auto download extensions SILENTLY di balik layar on launch if empty)
+main_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/MainActivity.kt'
+if os.path.exists(main_path):
+    c3 = open(main_path, encoding='utf-8').read()
     changed = False
 
-    # 1. Inject the permanent repo logic right after super.onCreate(savedInstanceState)
     oncreate_target = 'super.onCreate(savedInstanceState)'
-    oncreate_marker = '// MTSFlix: Permanent repo'
-    
-    if oncreate_marker not in content and oncreate_target in content:
+    if 'setKey(HAS_DONE_SETUP_KEY, true)' not in c3 and oncreate_target in c3:
         bypass_code = '''super.onCreate(savedInstanceState)
-        // MTSFlix: Permanent repo
+        setKey(HAS_DONE_SETUP_KEY, true)
         try {
-            val repoUrl = "https://cdn.jsdelivr.net/gh/muhamadakmal854-svg/Provider@builds/repo.json"
-            val repoName = "MTS Repo"
-            val key = "REPOSITORIES_KEY"
-            val currentRepos = getKey<Array<com.lagradost.cloudstream3.ui.settings.extensions.RepositoryData>>(key) ?: emptyArray()
-            
-            // Add repo if not present
-            if (currentRepos.none { it.url == repoUrl }) {
-                val newRepo = com.lagradost.cloudstream3.ui.settings.extensions.RepositoryData(null, repoName, repoUrl)
-                setKey(key, currentRepos + newRepo)
-                Log.i("MTSFlix", "Added permanent repo: $repoUrl")
+                fun ensureSolePencariMovie() {
+        try {
+            val pm = com.mts.pencarimovie.PencariMovie(this)
+            com.lagradost.cloudstream3.APIHolder.allProviders.withLock {
+                com.lagradost.cloudstream3.APIHolder.allProviders.clear()
+                com.lagradost.cloudstream3.APIHolder.allProviders.add(pm)
             }
-        } catch (e: Exception) {
-            Log.e("MTSFlix", "Repo setup error: " + e.message)
-        }'''
-        content = content.replace(oncreate_target, bypass_code, 1)
-        changed = True
-        print("  OK: Permanent repo injected into MainActivity.onCreate()")
+            com.lagradost.cloudstream3.MainAPI.apis = com.lagradost.cloudstream3.utils.Coroutines.atomicListOf(pm)
+            com.lagradost.cloudstream3.APIHolder.apiMap = mapOf(pm.name to 0)
+        } catch (_: Exception) {}
+    }
 
-    # 2. Inject permanent repo check into onNewIntent
-    onnewintent_target = 'override fun onNewIntent(intent: Intent) {'
-    onnewintent_marker = '// MTSFlix: Ensure permanent repo before handling deep link'
-    
-    if onnewintent_marker not in content and onnewintent_target in content:
-        onnewintent_code = '''override fun onNewIntent(intent: Intent) {
-        // MTSFlix: Ensure permanent repo before handling deep link
-        try {
-            val repoUrl = "https://cdn.jsdelivr.net/gh/muhamadakmal854-svg/Provider@builds/repo.json"
-            val repoName = "MTS Repo"
-            val key = "REPOSITORIES_KEY"
-            val currentRepos = getKey<Array<com.lagradost.cloudstream3.ui.settings.extensions.RepositoryData>>(key) ?: emptyArray()
-            if (currentRepos.none { it.url == repoUrl }) {
-                val newRepo = com.lagradost.cloudstream3.ui.settings.extensions.RepositoryData(null, repoName, repoUrl)
-                setKey(key, currentRepos + newRepo)
+            // PENCARIMOVIE: Sole Provider & Built-in Rust Streaming Server
+            try {
+                com.mts.pencarimovie.PencariMovieLocalServerService.start(this@MainActivity)
+            } catch (e: Exception) {
+                com.mts.pencarimovie.PencariMovieServerManager.startServerAsync(this@MainActivity)
+            }
+
+            ioSafe {
+                try {
+                    val pmProvider = com.mts.pencarimovie.PencariMovie(this@MainActivity)
+                    com.lagradost.cloudstream3.APIHolder.allProviders.withLock {
+                        com.lagradost.cloudstream3.APIHolder.allProviders.clear()
+                        com.lagradost.cloudstream3.APIHolder.allProviders.add(pmProvider)
+                    }
+                    com.lagradost.cloudstream3.MainAPI.apis = com.lagradost.cloudstream3.utils.Coroutines.atomicListOf(pmProvider)
+                    com.lagradost.cloudstream3.APIHolder.apiMap = mapOf(pmProvider.name to 0)
+                } catch (e: Exception) {
+                    android.util.Log.e("PencariMovie", "Provider init error: ${e.message}")
+                }
             }
         } catch (e: Exception) {}'''
-        content = content.replace(onnewintent_target, onnewintent_code, 1)
+        c3 = c3.replace(oncreate_target, bypass_code, 1)
         changed = True
-        print("  OK: Permanent repo check injected into MainActivity.onNewIntent()")
 
-    # 3. Disable setup wizard navigation (language & extensions)
-    pattern_setup = re.compile(r'try\s*\{\s*if\s*\(\s*getKey\(\s*HAS_DONE_SETUP_KEY[\s\S]*?logError\(e\)\s*\}')
-    new_content, count = pattern_setup.subn('// MTSFlix: Setup wizard bypassed entirely\n        Log.i("MTSFlix", "Setup wizard bypassed entirely")', content)
-    if count > 0:
-        content = new_content
+    t3_1 = '''        try {
+            if (getKey(HAS_DONE_SETUP_KEY, false) != true) {
+                navController.navigate(R.id.navigation_setup_language)
+                // If no plugins bring up extensions screen
+            } else if (PluginManager.getPluginsOnline().isEmpty()
+                && PluginManager.getPluginsLocal().isEmpty()
+//                && PREBUILT_REPOSITORIES.isNotEmpty()
+            ) {
+                navController.navigate(
+                    R.id.navigation_setup_extensions,
+                    SetupFragmentExtensions.newInstance(false)
+                )
+            }
+        } catch (e: Exception) {
+            logError(e)
+        }'''
+
+    r3_1 = '''        try {
+            setKey(HAS_DONE_SETUP_KEY, true)
+        } catch (e: Exception) {
+            logError(e)
+        }'''
+
+    if t3_1 in c3:
+        c3 = c3.replace(t3_1, r3_1, 1)
         changed = True
-        print("  OK: Setup wizard navigation disabled")
+
+    t3_2 = 'navController.addOnDestinationChangedListener { _: NavController, navDestination: NavDestination, bundle: Bundle? ->'
+    r3_2 = '''navController.addOnDestinationChangedListener { _: NavController, navDestination: NavDestination, bundle: Bundle? ->
+            if (navDestination.id == R.id.navigation_setup_extensions ||
+                navDestination.id == R.id.navigation_setup_language ||
+                navDestination.id == R.id.navigation_setup_provider_languages ||
+                navDestination.id == R.id.navigation_setup_media ||
+                navDestination.id == R.id.navigation_setup_layout) {
+                setKey(HAS_DONE_SETUP_KEY, true)
+                try {
+                    navController.navigate(R.id.navigation_home)
+                } catch (e: Exception) {}
+            }'''
+
+    if t3_2 in c3 and 'navDestination.id == R.id.navigation_setup_extensions' not in c3:
+        c3 = c3.replace(t3_2, r3_2, 1)
+        changed = True
+        
+    if 'override fun onPause() {' not in c3:
+        onpause_code = '''
+    override fun onPause() {
+        super.onPause()
+        try {
+            val ctx = this
+            Thread { com.mts.mtsflix.cloud.MTSFlixCloudSync.saveWatchHistory(ctx) }.start()
+        } catch (e: Exception) {}
+    }
+'''
+        c3 = c3.replace('override fun onDestroy() {', onpause_code + '\n    override fun onDestroy() {')
+        changed = True
+    else:
+        # onPause already exists — inject saveWatchHistory INTO existing onPause
+        old_onpause = 'override fun onPause() {\n        super.onPause()'
+        new_onpause = '''override fun onPause() {
+        super.onPause()
+        try {
+            val ctx = this
+            Thread { com.mts.mtsflix.cloud.MTSFlixCloudSync.saveWatchHistory(ctx) }.start()
+        } catch (e: Exception) {}'''
+        if old_onpause in c3 and 'saveWatchHistory' not in c3:
+            c3 = c3.replace(old_onpause, new_onpause, 1)
+            changed = True
+
+    # Auto-sync on every app open (cross-device support)
+    # Inject INTO existing onResume (do NOT add duplicate function)
+    if 'autoSyncFromCloud' not in c3:
+        if 'override fun onResume() {' in c3:
+            # Inject at start of existing onResume after super.onResume()
+            old_onresume = 'override fun onResume() {\n        super.onResume()'
+            new_onresume = '''override fun onResume() {
+        super.onResume()
+        try {
+            val ctx = this
+            Thread {
+                try {
+                    val updated = com.mts.mtsflix.cloud.MTSFlixCloudSync.autoSyncFromCloud(ctx)
+                    if (updated) {
+                        runOnUiThread {
+                            try {
+                                android.widget.Toast.makeText(ctx, "\u2705 Sejarah tontonan dikemas kini dari cloud", android.widget.Toast.LENGTH_SHORT).show()
+                                try {
+                                    val navFrag = supportFragmentManager.findFragmentById(com.lagradost.cloudstream3.R.id.nav_host_fragment) as? androidx.navigation.fragment.NavHostFragment
+                                    navFrag?.navController?.navigate(com.lagradost.cloudstream3.R.id.navigation_home)
+                                } catch (e: Exception) {}
+                            } catch (e: Exception) {}
+                        }
+                    }
+                } catch (e: Exception) {}
+            }.start()
+        } catch (e: Exception) {}'''
+            if old_onresume in c3:
+                c3 = c3.replace(old_onresume, new_onresume, 1)
+                changed = True
+        else:
+            # No onResume exists — add new one
+            onresume_code = '''
+    override fun onResume() {
+        super.onResume()
+        try {
+            val ctx = this
+            Thread {
+                try {
+                    val updated = com.mts.mtsflix.cloud.MTSFlixCloudSync.autoSyncFromCloud(ctx)
+                    if (updated) {
+                        runOnUiThread {
+                            try {
+                                android.widget.Toast.makeText(ctx, "✅ Sejarah tontonan dikemas kini dari cloud", android.widget.Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {}
+                        }
+                    }
+                } catch (e: Exception) {}
+            }.start()
+        } catch (e: Exception) {}
+    }
+'''
+            c3 = c3.replace('override fun onDestroy() {', onresume_code + '\n    override fun onDestroy() {')
+            changed = True
+
+    if 'runAutoUpdate()' in c3:
+        c3 = c3.replace('runAutoUpdate()', 'runAutoUpdate(checkAutoUpdate = false)')
+        changed = True
 
     if changed:
-        open(main_path, 'w', encoding='utf-8').write(content)
-        print("  OK: MainActivity.kt patched successfully")
-    else:
-        print("  INFO: MainActivity.kt already patched or target not found")
+        open(main_path, 'w', encoding='utf-8').write(c3)
+        print("  OK: MainActivity.kt patched successfully with onResume auto-sync")
 PYEOF
 
-# --- 6. Patch SettingsFragment.kt to ensure Extensions menu option is VISIBLE ---
-echo "[6/12] Patching SettingsFragment.kt to ensure Extensions option is VISIBLE..."
-python3 - << 'PYEOF'
+# --- 6. Patch SettingsFragment.kt & settings_account.xml -------------------
+echo "[6/12] HIDE Extensions menu & REMOVE Accounts section in settings..."
+$PYTHON_BIN - << 'PYEOF'
 import os, re
 cs_dir = os.environ.get('CS_DIR','cloudstream')
-settings_frag_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/settings/SettingsFragment.kt'
 
-if not os.path.exists(settings_frag_path):
-    print("  WARN: SettingsFragment.kt not found, skipping patch")
-else:
-    print("  Patching SettingsFragment.kt...")
-    content = open(settings_frag_path, encoding='utf-8').read()
-    
-    # Ensure settingsExtensions is VISIBLE so users can browse & choose providers from MTS Repo
-    target = 'settingsExtensions.visibility = View.GONE'
-    replacement = 'settingsExtensions.visibility = View.VISIBLE'
-    if target in content:
-        content = content.replace(target, replacement)
-        open(settings_frag_path, 'w', encoding='utf-8').write(content)
-        print("  OK: Ensured Extensions option is VISIBLE in SettingsFragment")
-    else:
-        print("  INFO: SettingsFragment.kt Extensions option is visible")
+# Hide Extensions section in SettingsFragment.kt to prevent URL theft
+settings_frag_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/settings/SettingsFragment.kt'
+if os.path.exists(settings_frag_path):
+    c = open(settings_frag_path, encoding='utf-8').read()
+    if 'settingsExtensions.visibility = View.GONE' not in c:
+        c = c.replace('binding.apply {', 'binding.apply {\n            settingsExtensions.visibility = View.GONE', 1)
+        open(settings_frag_path, 'w', encoding='utf-8').write(c)
+        print("  OK: HIDE Extensions section in SettingsFragment")
+
+# Remove Accounts category in settings_account.xml
+xml_acc_path = cs_dir + '/app/src/main/res/xml/settings_account.xml'
+if os.path.exists(xml_acc_path):
+    c = open(xml_acc_path, encoding='utf-8').read()
+    c = re.sub(r'<PreferenceCategory\s+android:title="@string/pref_category_accounts">.*?</PreferenceCategory>', '', c, flags=re.DOTALL)
+    open(xml_acc_path, 'w', encoding='utf-8').write(c)
+    print("  OK: Removed Accounts section from settings_account.xml")
 PYEOF
 
 # --- 7. Patch strings and settings_general.xml ----------------------------
 echo "[7/12] Patching donottranslate-strings.xml and settings_general.xml..."
-python3 - << 'PYEOF'
+$PYTHON_BIN - << 'PYEOF'
 import os, re
 cs_dir = os.environ.get('CS_DIR','cloudstream')
 
-# 1. Translate legal notice text
 donottranslate_path = cs_dir + '/app/src/main/res/values/donottranslate-strings.xml'
 if os.path.exists(donottranslate_path):
-    print("  Patching donottranslate-strings.xml...")
     content = open(donottranslate_path, encoding='utf-8').read()
-    
     malay_notice = """Sebarang isu undang-undang mengenai kandungan dalam aplikasi ini perlulah dirujuk kepada hos fail dan penyedia kandungan sebenar kerana kami tidak mempunyai sebarang kaitan dengan mereka.
 
         Sekiranya berlaku pelanggaran hak cipta, sila hubungi terus pihak yang bertanggungjawab atau laman web penstriman berkenaan.
 
         Aplikasi ini adalah untuk kegunaan pendidikan dan peribadi sahaja.
 
-        MTSFlix tidak mengehos sebarang kandungan dalam aplikasi ini, dan tidak mempunyai kawalan ke atas media yang dimasukkan atau dikeluarkan.
-        MTSFlix berfungsi seperti mana-mana enjin carian lain, seperti Google. MTSFlix tidak mengehos, memuat naik atau menguruskan sebarang video, filem atau kandungan. Ia hanya merangkak, mengumpul dan memaparkan pautan dalam antara muka yang mudah dan mesra pengguna.
+        PENCARIMOVIE tidak mengehos sebarang kandungan dalam aplikasi ini, dan tidak mempunyai kawalan ke atas media yang dimasukkan atau dikeluarkan.
+        PENCARIMOVIE berfungsi seperti mana-mana enjin carian lain, seperti Google. PENCARIMOVIE tidak mengehos, memuat naik atau menguruskan sebarang video, filem atau kandungan. Ia hanya merangkak, mengumpul dan memaparkan pautan dalam antara muka yang mudah dan mesra pengguna.
 
-        Ia hanya mengikis laman web pihak ketiga yang boleh diakses secara umum melalui mana-mana pelayar web biasa. Adalah menjadi tanggungjawab pengguna untuk mengelakkan sebarang tindakan yang boleh melanggar undang-undang di kawasan tempatan anda. Gunakan MTSFlix atas risiko anda sendiri."""
-        
+        Ia hanya mengikis laman web pihak ketiga yang boleh diakses secara umum melalui mana-mana pelayar web biasa. Adalah menjadi tanggungjawab pengguna untuk mengelakkan sebarang tindakan yang boleh melanggar undang-undang di kawasan tempatan anda. Gunakan PENCARIMOVIE atas risiko anda sendiri."""
     pattern = r'(<string name="legal_notice_text">)(.*?)(</string>)'
-    
-    def repl_func(match):
-        return match.group(1) + malay_notice + match.group(3)
-        
-    new_content = re.sub(pattern, repl_func, content, flags=re.DOTALL)
+    new_content = re.sub(pattern, lambda m: m.group(1) + malay_notice + m.group(3), content, flags=re.DOTALL)
     if new_content != content:
         open(donottranslate_path, 'w', encoding='utf-8').write(new_content)
-        print("    OK: Translated legal_notice_text to Bahasa Melayu and changed CloudStream to MTSFlix")
 
-# 2. Remove benene and links category from settings_general.xml
 xml_path = cs_dir + '/app/src/main/res/xml/settings_general.xml'
 if os.path.exists(xml_path):
-    print("  Patching settings_general.xml...")
     content = open(xml_path, encoding='utf-8').read()
-    
-    # Remove benene count preference
-    benene_pattern = r'\s*<Preference\s+android:icon="@drawable/benene".*?/>'
-    content = re.sub(benene_pattern, '', content, flags=re.DOTALL)
-    
-    # Remove pref_category_links category
-    links_pattern = r'\s*<PreferenceCategory android:title="@string/pref_category_links">.*?</PreferenceCategory>'
-    content = re.sub(links_pattern, '', content, flags=re.DOTALL)
-    
+    content = re.sub(r'\s*<Preference\s+android:icon="@drawable/benene".*?/>', '', content, flags=re.DOTALL)
+    content = re.sub(r'\s*<PreferenceCategory android:title="@string/pref_category_links">.*?</PreferenceCategory>', '', content, flags=re.DOTALL)
     open(xml_path, 'w', encoding='utf-8').write(content)
-    print("    OK: Removed benene count and links category from settings_general.xml")
 PYEOF
 
-# --- 8. Patch InAppUpdater.kt for custom update repository -----------------
+# --- 8. Patch InAppUpdater.kt ----------------------------------------------
 echo "[8/12] Patching InAppUpdater.kt for custom update repository..."
-python3 - << 'PYEOF'
-import os, re
+$PYTHON_BIN - << 'PYEOF'
+import os
 cs_dir = os.environ.get('CS_DIR','cloudstream')
 updater_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/utils/InAppUpdater.kt'
 
-if not os.path.exists(updater_path):
-    print("  WARN: InAppUpdater.kt not found, skipping patch")
-else:
-    print("  Patching InAppUpdater.kt...")
+if os.path.exists(updater_path):
     content = open(updater_path, encoding='utf-8').read()
-    changed = False
-    
-    # 1. Replace GITHUB_USER_NAME and GITHUB_REPO
-    user_target = 'private const val GITHUB_USER_NAME = "recloudstream"'
-    user_repl = 'private const val GITHUB_USER_NAME = "muhamadakmal854-svg"'
-    if user_target in content:
-        content = content.replace(user_target, user_repl)
-        changed = True
-        print("    OK: Changed GITHUB_USER_NAME to muhamadakmal854-svg")
-        
-    repo_target = 'private const val GITHUB_REPO = "cloudstream"'
-    repo_repl = 'private const val GITHUB_REPO = "MTSFlix"'
-    if repo_target in content:
-        content = content.replace(repo_target, repo_repl)
-        changed = True
-        print("    OK: Changed GITHUB_REPO to MTSFlix")
-        
-    # 2. Change update file name to MTSFlix
-    name_target = 'val appUpdateName = "CloudStream"'
-    name_repl = 'val appUpdateName = "MTSFlix"'
-    if name_target in content:
-        content = content.replace(name_target, name_repl)
-        changed = True
-        print("    OK: Changed appUpdateName to MTSFlix")
-        
-    if changed:
-        open(updater_path, 'w', encoding='utf-8').write(content)
-        print("    OK: InAppUpdater.kt patched successfully")
-    else:
-        print("    INFO: InAppUpdater.kt already patched or targets not found")
+    content = content.replace('private const val GITHUB_USER_NAME = "recloudstream"', 'private const val GITHUB_USER_NAME = "muhamadakmal854-svg"')
+    content = content.replace('private const val GITHUB_REPO = "cloudstream"', 'private const val GITHUB_REPO = "PencariMovie"')
+    content = content.replace('val appUpdateName = "CloudStream"', 'val appUpdateName = "PENCARIMOVIE"')
+
+    # Strip markdown symbols from changelog before displaying in popup
+    # Insert a helper function and clean the changelog text
+    old_return = '''        return Update(
+            shouldUpdate,
+            foundAsset.browserDownloadUrl,
+            foundVersion.groupValues[2],
+            found.body,
+            found.nodeId
+        )'''
+    new_return = '''        // Strip markdown symbols from changelog so popup looks clean
+        val cleanBody = found.body
+            .replace(Regex("#{1,6}\\\\s*"), "")   // remove ## ### etc
+            .replace(Regex("\\\\*{1,2}([^*]+)\\\\*{1,2}"), "$1") // remove **bold**
+            .replace(Regex("^---+$", RegexOption.MULTILINE), "")  // remove ---
+            .replace(Regex("^\\\\|.*\\\\|$", RegexOption.MULTILINE), "") // remove tables
+            .replace(Regex("^>\\\\s*", RegexOption.MULTILINE), "")       // remove blockquotes
+            .replace(Regex("\\\\n{3,}"), "\\n\\n")  // collapse blank lines
+            .trim()
+        return Update(
+            shouldUpdate,
+            foundAsset.browserDownloadUrl,
+            foundVersion.groupValues[2],
+            cleanBody,
+            found.nodeId
+        )'''
+    if old_return in content:
+        content = content.replace(old_return, new_return)
+
+    # Translate "New update found!" and related strings to Malay
+    content = content.replace('"New update found!"', '"Kemas kini tersedia!"')
+    content = content.replace('"Download"', '"Muat Turun"')
+    content = content.replace('"Cancel"', '"Batal"')
+    content = content.replace('"Update"', '"Kemas kini"')
+    content = content.replace('"Downloading update"', '"Sedang memuat turun kemas kini"')
+    content = content.replace('"Installing update"', '"Memasang kemas kini"')
+
+    open(updater_path, 'w', encoding='utf-8').write(content)
+    print('  OK: InAppUpdater patched — markdown stripped, strings translated to Malay')
 PYEOF
 
-# --- 9. Generate BuildUrls.kt with hardcoded URLs --------------------------
+# --- 9. Generate BuildUrls.kt ----------------------------------------------
 echo "[9/12] Generating BuildUrls.kt with hardcoded URLs..."
 TARGET_LIC="$CS_DIR/app/src/main/java/com/mts/mtsflix/license"
 mkdir -p "$TARGET_LIC"
@@ -402,46 +661,48 @@ cat > "$TARGET_LIC/BuildUrls.kt" << KTEOF
 // AUTO-GENERATED by MTSFlix build script — DO NOT EDIT
 package com.mts.mtsflix.license
 
-/** MTSFlix device license database URL */
-const val MTS_LICENSE_URL = "https://raw.githubusercontent.com/muhamadakmal854-svg/MTSFlix/main/licenses.json"
+const val MTS_LICENSE_URL = "https://raw.githubusercontent.com/muhamadakmal854-svg/PencariMovie/main/licenses.json"
 KTEOF
-echo "  OK: BuildUrls.kt generated"
 
 # --- 10. Copy Custom MTSFlix Source Files ----------------------------------
 echo "[10/12] Copying custom MTSFlix source files..."
 CUSTOM_SRC="$MTSFLIX_DIR/custom_src"
 TARGET_PKG="$CS_DIR/app/src/main/java/com/mts/mtsflix"
+TARGET_PM="$CS_DIR/app/src/main/java/com/mts/pencarimovie"
 mkdir -p "$TARGET_PKG"
+mkdir -p "$TARGET_PM"
 
 if [ -d "$CUSTOM_SRC" ]; then
   cp -r "$CUSTOM_SRC/"* "$TARGET_PKG/" 2>/dev/null || true
-  COUNT=$(find "$TARGET_PKG" -name "*.kt" | wc -l)
-  echo "  OK: $COUNT Kotlin files copied"
-else
-  echo "  WARN: custom_src not found"
+  if [ -d "$CUSTOM_SRC/pencarimovie" ]; then
+    cp -r "$CUSTOM_SRC/pencarimovie/"* "$TARGET_PM/" 2>/dev/null || true
+  fi
 fi
 
 # --- 11. Patch AndroidManifest: LicenseCheckActivity as LAUNCHER -----------
-echo "[11/12] Setting LicenseCheckActivity as LAUNCHER..."
+echo "[11/12] Setting LicenseCheckActivity as LAUNCHER + fixing System App categorization..."
 MANIFEST="$CS_DIR/app/src/main/AndroidManifest.xml"
 if [ -f "$MANIFEST" ]; then
-  python3 - << 'PYEOF'
+  $PYTHON_BIN - << 'PYEOF'
 import re, os
 path = os.environ.get('CS_DIR','cloudstream') + '/app/src/main/AndroidManifest.xml'
 try:
     c = open(path, encoding='utf-8').read()
-    if 'LicenseCheckActivity' in c:
-        print('  INFO: LicenseCheckActivity already in manifest')
-    else:
-        # Remove all existing MAIN/LAUNCHER/LEANBACK_LAUNCHER intent-filters
+
+    # FIX: System App issue on Xiaomi/AOSP TV sticks & Google TV
+    # Remove UPDATE_PACKAGES_WITHOUT_USER_ACTION & TV EPG permissions which cause System App classification
+    c = c.replace('<uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />', '<!-- MTSFlix: removed UPDATE_PACKAGES_WITHOUT_USER_ACTION to prevent System App categorization -->')
+    c = c.replace('<uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />', '')
+    c = c.replace('<uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />', '')
+    # Add installLocation=auto to <manifest> tag so OS treats it as user-installed app
+    if 'android:installLocation' not in c:
+        c = c.replace('<manifest xmlns:android=', '<manifest android:installLocation="auto" xmlns:android=')
+        print('  OK: Added installLocation=auto to manifest')
+    print('  OK: Removed privileged permissions to prevent System App categorization')
+
+    if 'LicenseCheckActivity' not in c:
         pattern = re.compile(r'<intent-filter[\s\S]*?</intent-filter>')
-        def repl(match):
-            text = match.group(0)
-            if 'android.intent.action.MAIN' in text and ('android.intent.category.LAUNCHER' in text or 'android.intent.category.LEANBACK_LAUNCHER' in text):
-                return ''
-            return text
-        c = pattern.sub(repl, c)
-        # Add LicenseCheckActivity as launcher before </application>
+        c = pattern.sub(lambda m: '' if 'android.intent.action.MAIN' in m.group(0) and ('android.intent.category.LAUNCHER' in m.group(0) or 'android.intent.category.LEANBACK_LAUNCHER' in m.group(0)) else m.group(0), c)
         activity = '''
         <!-- MTSFlix: Device Verification (LAUNCHER) -->
         <activity
@@ -452,23 +713,97 @@ try:
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>'''
         c = c.replace('</application>', activity + '\n    </application>')
         open(path,'w',encoding='utf-8').write(c)
-        print('  OK: LicenseCheckActivity set as LAUNCHER')
+
+    if 'ProfileSwitchActivity' not in c:
+        profile_activities = '''
+        <!-- MTSFlix: Profile Switch Screen -->
+        <activity
+            android:name="com.mts.mtsflix.license.ProfileSwitchActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />
+        <!-- MTSFlix: TV QR Pairing Screen -->
+        <activity
+            android:name="com.mts.mtsflix.license.TVPairingActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />
+        <!-- MTSFlix: Provider Lock Screen v1.1.4 -->
+        <activity
+            android:name="com.mts.mtsflix.license.ProviderLockManageActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />
+        <activity
+            android:name="com.mts.mtsflix.license.ProviderLockPinActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />
+        <!-- MTSFlix: Device Verification (LAUNCHER) -->'''
+        c = c.replace('<!-- MTSFlix: Device Verification (LAUNCHER) -->', profile_activities)
+        open(path,'w',encoding='utf-8').write(c)
+        print('  OK: ProfileSwitchActivity + TVPairingActivity registered')
+
+    open(path,'w',encoding='utf-8').write(c)
+    print('  OK: AndroidManifest fully patched')
 except Exception as e:
     print(f'  WARN: {e}')
 PYEOF
 fi
 
-# --- 12. Filter 18+/18x/NSFW providers automatically ----------------------
-echo "[12/12] Patching automatic 18+/18x/NSFW provider filters..."
-python3 - << 'PYEOF'
+# --- 12. COMPREHENSIVE 18+ / 18x / HENTAI / VIVAMAX TRACE & BLOCK FILTER ---
+echo "[12/12] Patching COMPREHENSIVE adult, Hentai & Vivamax item/row filters..."
+$PYTHON_BIN - << 'PYEOF'
 import os, re
 cs_dir = os.environ.get('CS_DIR','cloudstream')
 
-# 1. Filter out 18+/NSFW plugins in PluginsViewModel.kt (Extensions download list)
+# HomeViewModel.kt: Filter out all 18+ categories AND individual Hentai/Vivamax items
+hvm_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/home/HomeViewModel.kt'
+if os.path.exists(hvm_path):
+    c = open(hvm_path, encoding='utf-8').read()
+    target_row = 'home?.items?.forEach { list ->'
+    replacement_row = '''home?.items?.forEach { list ->
+                            val rowName = list.name.lowercase()
+                            val is18Row = rowName.contains("18+") || rowName.contains("18x") || rowName.contains("18") ||
+                                          rowName.contains("adult") || rowName.contains("nsfw") || rowName.contains("bokep") ||
+                                          rowName.contains("hentai") || rowName.contains("porn") || rowName.contains("vivamax") ||
+                                          rowName.contains("semi") || rowName.contains("jav") || rowName.contains("xxx") || rowName.contains("sex") ||
+                                          rowName.contains("kelas bintang") || rowName.contains("kelasbintang") || rowName.contains("inem") || rowName.contains("bintang") ||
+                                          rowName.contains("philiphines") || rowName.contains("philippines") || rowName.contains("philippine") || rowName.contains("tagalog 18")
+                            if (is18Row) return@forEach
+                            
+                            val cleanItems = list.list.filter { item ->
+                                val iName = item.name.lowercase()
+                                val iUrl = item.url.lowercase()
+                                val is18Item = iName.contains("18+") || iName.contains("18x") || iName.contains("bokep") ||
+                                               iName.contains("hentai") || iName.contains("vivamax") || iName.contains("semi") ||
+                                               iName.contains("inem") || iName.contains("kelas bintang") || iName.contains("kelasbintang") ||
+                                               iName.contains("onaj") || iName.contains("someya") || iName.contains("jav") ||
+                                               iName.contains("love wa gal") || iName.contains("gal kara") || iName.contains("hamehara") ||
+                                               iName.contains("sekuhara") || iName.contains("enjo kouhai") || iName.contains("enjo") ||
+                                               iName.contains("kouhai") || iName.contains("nuki nuki") || iName.contains("nuki") ||
+                                               iName.contains("zupposism") || iName.contains("paihame") || iName.contains("hajimaru unmei") ||
+                                               iName.contains("donselya") || iName.contains("kesong puti") || iName.contains("kesong") ||
+                                               iName.contains("kulong") || iName.contains("virgin") || iName.contains("netorare") ||
+                                               iName.contains("ntr") || iName.contains("taimanin") || iName.contains("chikan") ||
+                                               iName.contains("oppai") || iName.contains("oyakodon") ||
+                                               iUrl.contains("18+") || iUrl.contains("18x") || iUrl.contains("bokep") || iUrl.contains("hentai") ||
+                                               iUrl.contains("vivamax") || iUrl.contains("semi") || iUrl.contains("inem") || iUrl.contains("kelasbintang") ||
+                                               iUrl.contains("hamehara") || iUrl.contains("enjo") || iUrl.contains("nuki") || iUrl.contains("paihame") || iUrl.contains("donselya")
+                                !is18Item
+                            }
+                            val list = list.copy(list = java.util.concurrent.CopyOnWriteArrayList(cleanItems))'''
+    if target_row in c and 'is18Row' not in c:
+        c = c.replace(target_row, replacement_row)
+        open(hvm_path, 'w', encoding='utf-8').write(c)
+        print("  OK: Patched HomeViewModel.kt to filter 18+ Hentai/Vivamax categories & items")
+
+# PluginsViewModel.kt: Hide 18+ plugins in Extensions Download screen
 pvm_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/settings/extensions/PluginsViewModel.kt'
 if os.path.exists(pvm_path):
     c = open(pvm_path, encoding='utf-8').read()
@@ -477,25 +812,25 @@ if os.path.exists(pvm_path):
             val name = it.plugin.name.lowercase()
             val internalName = it.plugin.internalName.lowercase()
             val is18 = tvTypes.any { t -> t.equals(TvType.NSFW.name, ignoreCase = true) || t.contains("18") || t.lowercase().contains("adult") || t.lowercase().contains("nsfw") } ||
-                       name.contains("18+") || name.contains("18x") || name.contains("adult") || name.contains("nsfw") || name.contains("porn") || name.contains("hentai") || name.contains("xxx") ||
-                       internalName.contains("18+") || internalName.contains("18x") || internalName.contains("adult") || internalName.contains("nsfw") || internalName.contains("porn") || internalName.contains("hentai") || internalName.contains("xxx")
+                       name.contains("18") || name.contains("adult") || name.contains("nsfw") || name.contains("porn") || name.contains("hentai") || name.contains("xxx") || name.contains("bokep") || name.contains("vivamax") || name.contains("semi") || name.contains("jav") || name.contains("kelasbintang") || name.contains("inem") ||
+                       internalName.contains("18") || internalName.contains("adult") || internalName.contains("nsfw") || internalName.contains("porn") || internalName.contains("hentai") || internalName.contains("xxx") || internalName.contains("bokep") || internalName.contains("vivamax") || internalName.contains("semi") || internalName.contains("jav") || internalName.contains("kelasbintang") || internalName.contains("inem")
             !is18'''
     if target in c:
         c = c.replace(target, replacement)
         open(pvm_path, 'w', encoding='utf-8').write(c)
-        print("  OK: Filtered 18+ plugins in PluginsViewModel.kt")
+        print("  OK: Patched PluginsViewModel.kt to filter 18+ extensions")
 
-# 2. Filter out 18+/NSFW providers in PluginManager.kt (Plugin loading)
+# PluginManager.kt: Prevent loading 18+ plugins
 pm_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/plugins/PluginManager.kt'
 if os.path.exists(pm_path):
     c = open(pm_path, encoding='utf-8').read()
     pm_target = '//Omit NSFW, if disabled'
-    pm_replacement = '''// Omit 18+ / 18x / NSFW providers
+    pm_replacement = '''// Omit 18+ / 18x / NSFW / Vivamax / Bokep / Kelas Bintang providers
             val siteNameLower = sitePlugin.name.lowercase()
             val siteInternalLower = sitePlugin.internalName.lowercase()
             val is18Plus = tvtypes.any { t -> t.equals(TvType.NSFW.name, ignoreCase = true) || t.contains("18") || t.lowercase().contains("adult") || t.lowercase().contains("nsfw") } ||
-                           siteNameLower.contains("18+") || siteNameLower.contains("18x") || siteNameLower.contains("adult") || siteNameLower.contains("nsfw") || siteNameLower.contains("porn") || siteNameLower.contains("hentai") || siteNameLower.contains("xxx") ||
-                           siteInternalLower.contains("18+") || siteInternalLower.contains("18x") || siteInternalLower.contains("adult") || siteInternalLower.contains("nsfw") || siteInternalLower.contains("porn") || siteInternalLower.contains("hentai") || siteInternalLower.contains("xxx")
+                           siteNameLower.contains("18") || siteNameLower.contains("adult") || siteNameLower.contains("nsfw") || siteNameLower.contains("porn") || siteNameLower.contains("hentai") || siteNameLower.contains("xxx") || siteNameLower.contains("bokep") || siteNameLower.contains("vivamax") || siteNameLower.contains("semi") || siteNameLower.contains("jav") || siteNameLower.contains("kelasbintang") || siteNameLower.contains("inem") ||
+                           siteInternalLower.contains("18") || siteInternalLower.contains("adult") || siteInternalLower.contains("nsfw") || siteInternalLower.contains("porn") || siteInternalLower.contains("hentai") || siteInternalLower.contains("xxx") || siteInternalLower.contains("bokep") || siteInternalLower.contains("vivamax") || siteInternalLower.contains("semi") || siteInternalLower.contains("jav") || siteInternalLower.contains("kelasbintang") || siteInternalLower.contains("inem")
             if (is18Plus) {
                 Log.i(TAG, "Omit 18+ provider > ${sitePlugin.internalName}")
                 return@mapNotNull null
@@ -504,9 +839,9 @@ if os.path.exists(pm_path):
     if pm_target in c and 'siteNameLower' not in c:
         c = c.replace(pm_target, pm_replacement)
         open(pm_path, 'w', encoding='utf-8').write(c)
-        print("  OK: Filtered 18+ plugins in PluginManager.kt")
+        print("  OK: Patched PluginManager.kt to omit 18+ plugins")
 
-# 3. Filter out 18+/NSFW providers in APIHolder.kt (MainAPI.kt)
+# MainAPI.kt: Filter apis list
 mainapi_path = cs_dir + '/library/src/commonMain/kotlin/com/lagradost/cloudstream3/MainAPI.kt'
 if os.path.exists(mainapi_path):
     c = open(mainapi_path, encoding='utf-8').read()
@@ -514,8 +849,9 @@ if os.path.exists(mainapi_path):
     api_replacement = '''apis.withLock {
             val pName = plugin.name.lowercase()
             val is18 = plugin.supportedTypes.contains(TvType.NSFW) ||
-                       pName.contains("18+") || pName.contains("18x") || pName.contains("nsfw") ||
-                       pName.contains("adult") || pName.contains("porn") || pName.contains("hentai") || pName.contains("xxx")
+                       pName.contains("18") || pName.contains("nsfw") || pName.contains("adult") ||
+                       pName.contains("porn") || pName.contains("hentai") || pName.contains("xxx") ||
+                       pName.contains("bokep") || pName.contains("vivamax") || pName.contains("semi") || pName.contains("jav") || pName.contains("kelasbintang") || pName.contains("inem")
             if (!is18) {
                 apis = apis + plugin
             }
@@ -523,20 +859,842 @@ if os.path.exists(mainapi_path):
     if api_target in c:
         c = c.replace(api_target, api_replacement)
         open(mainapi_path, 'w', encoding='utf-8').write(c)
-        print("  OK: Filtered 18+ providers in APIHolder (MainAPI.kt)")
+        print("  OK: Filtered 18+ providers in MainAPI.kt")
 
-# 4. Disable NSFW category chip in HomeFragment.kt
+# HomeFragment.kt: Comment out NSFW chip
 hf_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/home/HomeFragment.kt'
 if os.path.exists(hf_path):
     c = open(hf_path, encoding='utf-8').read()
-    hf_target = 'Pair(nsfw, listOf(TvType.NSFW)),'
-    hf_replacement = '// Pair(nsfw, listOf(TvType.NSFW)),'
-    if hf_target in c:
-        c = c.replace(hf_target, hf_replacement)
-        open(hf_path, 'w', encoding='utf-8').write(c)
-        print("  OK: Disabled NSFW category chip in HomeFragment.kt")
+    c = c.replace('Pair(nsfw, listOf(TvType.NSFW)),', '// Pair(nsfw, listOf(TvType.NSFW)),')
+    open(hf_path, 'w', encoding='utf-8').write(c)
+    print("  OK: Disabled NSFW category chip in HomeFragment.kt")
 PYEOF
 
 echo "======================================================"
 echo "    MTSFlix Customization Complete! (License Build)"
+echo "======================================================"
+
+# --- 13. Register Netflix-Style Profile Activities in AndroidManifest -------
+echo "[13/13] Registering Netflix-style profile activities in AndroidManifest..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+path = os.environ.get('CS_DIR','cloudstream') + '/app/src/main/AndroidManifest.xml'
+try:
+    c = open(path, encoding='utf-8').read()
+    changed = False
+
+    # Register ProfilePickerActivity (new Netflix-style picker)
+    if 'ProfilePickerActivity' not in c:
+        inject = '''
+        <!-- MTSFlix: Netflix-Style Profile Picker -->
+        <activity
+            android:name="com.mts.mtsflix.license.ProfilePickerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />
+        <!-- MTSFlix: Profile PIN Entry -->
+        <activity
+            android:name="com.mts.mtsflix.license.ProfilePinActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />
+        <!-- MTSFlix: Profile Manage Screen -->
+        <activity
+            android:name="com.mts.mtsflix.license.ProfileManageActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />'''
+        c = c.replace('<!-- MTSFlix: Profile Switch Screen -->', inject + '\n        <!-- MTSFlix: Profile Switch Screen (legacy) -->')
+        changed = True
+        print('  OK: ProfilePickerActivity + ProfilePinActivity + ProfileManageActivity registered')
+
+    if changed:
+        open(path, 'w', encoding='utf-8').write(c)
+except Exception as e:
+    print(f'  WARN profile activities: {e}')
+PYEOF
+
+# --- 14. Route LicenseCheckActivity → ProfilePickerActivity -----------------
+echo "[14/14] Routing LicenseCheckActivity to Netflix-style ProfilePickerActivity..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+# Find LicenseCheckActivity in the mts package
+for root, dirs, files in os.walk(cs_dir + '/app/src/main/java/com/mts/mtsflix'):
+    for f in files:
+        if f == 'LicenseCheckActivity.kt':
+            path = os.path.join(root, f)
+            c = open(path, encoding='utf-8').read()
+            # Replace route to old ProfileSwitchActivity with new ProfilePickerActivity
+            old = 'ProfileSwitchActivity::class.java'
+            new = 'ProfilePickerActivity::class.java'
+            if old in c and new not in c:
+                c = c.replace(old, new)
+                open(path, 'w', encoding='utf-8').write(c)
+                print('  OK: LicenseCheckActivity now routes to ProfilePickerActivity')
+            elif new in c:
+                print('  OK: LicenseCheckActivity already routes to ProfilePickerActivity')
+PYEOF
+
+# --- 15. Patch InAppUpdater: Download Progress Bar --------------------------
+echo "[15/15] Patching InAppUpdater.kt — adding download progress bar..."
+$PYTHON_BIN - << 'PYEOF'
+import os, re
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/utils/InAppUpdater.kt'
+
+if not os.path.exists(path):
+    print('  SKIP: InAppUpdater.kt not found')
+else:
+    c = open(path, encoding='utf-8').read()
+
+    # Replace the legacy downloadUpdate function with one that shows a progress dialog
+    old_download = '''    private suspend fun Activity.downloadUpdate(url: String): Boolean {
+        try {
+            Log.d(LOG_TAG, "Downloading update: $url")
+            val appUpdateName = "CloudStream"
+            val appUpdateSuffix = "apk"
+
+            // Delete all old updates
+            this.cacheDir.listFiles()?.filter {
+                it.name.startsWith(appUpdateName) && it.extension == appUpdateSuffix
+            }?.forEach { deleteFileOnExit(it) }
+
+            val downloadedFile = File.createTempFile(appUpdateName, ".$appUpdateSuffix")
+            val sink: BufferedSink = downloadedFile.sink().buffer()
+
+            updateLock.withLock {
+                sink.writeAll(app.get(url).body.source())
+                sink.close()
+                openApk(this, Uri.fromFile(downloadedFile))
+            }
+
+            return true
+        } catch (e: Exception) {
+            logError(e)
+            return false
+        }
+    }'''
+
+    new_download = '''    private suspend fun Activity.downloadUpdate(url: String): Boolean {
+        // Show progress dialog on UI thread
+        var progressDialog: android.app.ProgressDialog? = null
+        withContext(kotlinx.coroutines.Dispatchers.Main) {
+            try {
+                progressDialog = android.app.ProgressDialog(this@downloadUpdate).apply {
+                    setTitle("Memuat turun kemas kini")
+                    setMessage("Menyambung...")
+                    setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                    isIndeterminate = true
+                    setCancelable(false)
+                    progress = 0; max = 100
+                    show()
+                }
+            } catch (_: Exception) {}
+        }
+
+        return try {
+            Log.d(LOG_TAG, "Downloading update with progress: $url")
+            val appUpdateName = "PENCARIMOVIE"
+            val appUpdateSuffix = "apk"
+
+            // Delete old update files
+            this.cacheDir.listFiles()?.filter {
+                it.name.startsWith(appUpdateName) && it.extension == appUpdateSuffix
+            }?.forEach { deleteFileOnExit(it) }
+
+            val downloadedFile = File.createTempFile(appUpdateName, ".$appUpdateSuffix")
+
+            updateLock.withLock {
+                val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.connect()
+                val totalBytes = connection.contentLength.toLong()
+                val input = java.io.BufferedInputStream(connection.inputStream, 8192)
+                val output = java.io.FileOutputStream(downloadedFile)
+                val buffer = ByteArray(8192)
+                var downloaded = 0L
+                var read: Int
+
+                while (input.read(buffer).also { read = it } != -1) {
+                    output.write(buffer, 0, read)
+                    downloaded += read
+                    if (totalBytes > 0) {
+                        val pct = (downloaded * 100 / totalBytes).toInt()
+                        val dlMb = "%.1f".format(downloaded / 1_048_576.0)
+                        val totMb = "%.1f".format(totalBytes / 1_048_576.0)
+                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            try {
+                                progressDialog?.apply {
+                                    isIndeterminate = false
+                                    progress = pct
+                                    setMessage("$dlMb MB / $totMb MB  ($pct%)")
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+                output.flush(); output.close(); input.close()
+                connection.disconnect()
+
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    try {
+                        progressDialog?.setMessage("Memasang kemas kini...")
+                        progressDialog?.isIndeterminate = true
+                    } catch (_: Exception) {}
+                }
+
+                openApk(this@downloadUpdate, Uri.fromFile(downloadedFile))
+            }
+
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                try { progressDialog?.dismiss() } catch (_: Exception) {}
+            }
+            true
+        } catch (e: Exception) {
+            logError(e)
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                try { progressDialog?.dismiss() } catch (_: Exception) {}
+                try { showToast("Muat turun gagal. Cuba lagi.", android.widget.Toast.LENGTH_LONG) } catch (_: Exception) {}
+            }
+            false
+        }
+    }'''
+
+    if old_download in c and 'progressDialog' not in c:
+        c = c.replace(old_download, new_download)
+        # Add missing imports if needed
+        if 'import kotlinx.coroutines.Dispatchers' not in c and 'import kotlinx.coroutines' not in c:
+            c = c.replace('import java.io.InputStreamReader', 'import java.io.InputStreamReader\nimport kotlinx.coroutines.withContext')
+        open(path, 'w', encoding='utf-8').write(c)
+        print('  OK: InAppUpdater download progress bar added')
+    elif 'progressDialog' in c:
+        print('  OK: Download progress already patched')
+    else:
+        print('  WARN: Could not find downloadUpdate function to patch (CloudStream updated?)')
+PYEOF
+
+echo "# --- 16. Kids Mode: Cartoon/Anime-only Filter -------------------------"
+echo "[16/16] Patching kids cartoon/anime-only content filter..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+hvm_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/home/HomeViewModel.kt'
+if not os.path.exists(hvm_path):
+    print('  SKIP: HomeViewModel.kt not found')
+else:
+    c = open(hvm_path, encoding='utf-8').read()
+    kids_patch_marker = 'if (is18Row) return@forEach'
+    kids_patch = '''if (is18Row) return@forEach
+
+                            // MTSFlix KIDS FILTER: only show cartoon/anime for kids profiles
+                            try {
+                                val ctx = com.lagradost.cloudstream3.CloudStreamApp.context
+                                if (ctx != null) {
+                                    val isKids = com.mts.mtsflix.license.ProfileManager.isKidsModeActive(ctx)
+                                    if (isKids) {
+                                        val kidsKeywords = listOf("anime","cartoon","animation","kids","animasi","kartun","kanak","children","family")
+                                        val rowLower = list.name.lowercase()
+                                        val isKidsRow = kidsKeywords.any { rowLower.contains(it) } ||
+                                            list.list.any { item ->
+                                                val t = item.type.toString().lowercase()
+                                                t == "anime" || t == "cartoon" || t == "ova" || t == "animemovie" || t.contains("anim")
+                                            }
+                                        if (!isKidsRow) return@forEach
+                                    }
+                                }
+                            } catch (_: Exception) {}'''
+    if kids_patch_marker in c and 'MTSFlix KIDS FILTER' not in c:
+        c = c.replace(kids_patch_marker, kids_patch)
+        open(hvm_path, 'w', encoding='utf-8').write(c)
+        print('  OK: Kids cartoon/anime-only filter patched in HomeViewModel.kt')
+    elif 'MTSFlix KIDS FILTER' in c:
+        print('  OK: Kids filter already patched')
+    else:
+        print('  WARN: Could not find is18Row anchor in HomeViewModel.kt')
+PYEOF
+
+# --- 17. Reload Extensions Button -----------------------------------------
+# --- 17. Reload Extensions Button in Account & Security ---------------------
+echo "[17/17] Patching SettingsAccount — tambah Reload Provider di bawah Account & Security..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+
+# 17a. Patch settings_account.xml — tambah Preference
+xml_path = cs_dir + '/app/src/main/res/xml/settings_account.xml'
+if os.path.exists(xml_path):
+    c = open(xml_path, encoding='utf-8').read()
+    if 'reload_extensions_key' not in c:
+        category = '''
+    <PreferenceCategory
+        android:title="Kemaskini Extensions &amp; Provider">
+
+        <Preference
+            android:key="reload_extensions_key"
+            android:icon="@drawable/ic_refresh"
+            android:title="Reload Extensions &amp; Provider"
+            android:summary="Muat semula semua Provider &amp; Extensions terkini secara serta-merta" />
+
+    </PreferenceCategory>'''
+        c = c.replace('</PreferenceScreen>', category + '\n</PreferenceScreen>')
+        open(xml_path, 'w', encoding='utf-8').write(c)
+        print('  OK: Reload preference added to settings_account.xml')
+    else:
+        print('  OK: Reload preference already in settings_account.xml')
+else:
+    print('  SKIP: settings_account.xml not found')
+
+# 17b. Patch SettingsAccount.kt — handle preference click
+kt_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/settings/SettingsAccount.kt'
+if not os.path.exists(kt_path):
+    print('  SKIP: SettingsAccount.kt not found')
+else:
+    c = open(kt_path, encoding='utf-8').read()
+    if 'reload_extensions_key' in c:
+        print('  OK: Reload handler already in SettingsAccount.kt')
+    else:
+        handler = '''
+        findPreference<androidx.preference.Preference>("reload_extensions_key")?.setOnPreferenceClickListener {
+            val act = activity ?: return@setOnPreferenceClickListener false
+            ioSafe {
+                try {
+                    act.runOnUiThread {
+                        showToast("Memuatkan semula Extensions...", android.widget.Toast.LENGTH_SHORT)
+                    }
+                    @Suppress("DEPRECATION")
+                    com.lagradost.cloudstream3.plugins.PluginManager.___DO_NOT_CALL_FROM_A_PLUGIN_manuallyReloadAndUpdatePlugins(act)
+                    act.runOnUiThread {
+                        showToast("Extensions berjaya dimuatkan semula!", android.widget.Toast.LENGTH_SHORT)
+                    }
+                } catch (e: Exception) {
+                    act.runOnUiThread {
+                        showToast("Gagal reload: ${e.message}", android.widget.Toast.LENGTH_LONG)
+                    }
+                }
+            }
+            true
+        }
+'''
+        anchor = 'for ((key, api) in syncApis) {'
+        if anchor in c:
+            c = c.replace(anchor, handler + '\n        ' + anchor)
+            open(kt_path, 'w', encoding='utf-8').write(c)
+            print('  OK: Reload handler patched in SettingsAccount.kt')
+        else:
+            print('  WARN: Could not find anchor in SettingsAccount.kt')
+PYEOF
+
+# --- 18. Provider Lock PIN Feature (v1.1.4) --------------------------------
+echo "[18/18] Patching Provider Lock PIN Feature under Account & Security..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR','cloudstream')
+
+# 18a. Add Preference to settings_account.xml
+xml_path = cs_dir + '/app/src/main/res/xml/settings_account.xml'
+if os.path.exists(xml_path):
+    c = open(xml_path, encoding='utf-8').read()
+    if 'lock_providers_key' not in c:
+        lock_pref = '''
+        <Preference
+            android:key="lock_providers_key"
+            android:icon="@drawable/video_locked"
+            android:title="🔒 Kunci Provider (PIN Lock)"
+            android:summary="Kunci Provider tertentu dengan PIN 4-digit untuk sekat akses" />
+'''
+        if 'reload_extensions_key' in c:
+            c = c.replace('android:key="reload_extensions_key"', 'android:key="reload_extensions_key"')
+            c = c.replace('</PreferenceCategory>\n\n</PreferenceScreen>', lock_pref + '\n    </PreferenceCategory>\n\n</PreferenceScreen>')
+            if 'lock_providers_key' not in c:
+                c = c.replace('</PreferenceScreen>', lock_pref + '\n</PreferenceScreen>')
+        else:
+            c = c.replace('</PreferenceScreen>', lock_pref + '\n</PreferenceScreen>')
+        open(xml_path, 'w', encoding='utf-8').write(c)
+        print('  OK: Lock providers preference added to settings_account.xml')
+
+# 18b. Add listener in SettingsAccount.kt
+kt_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/settings/SettingsAccount.kt'
+if os.path.exists(kt_path):
+    c = open(kt_path, encoding='utf-8').read()
+    if 'lock_providers_key' not in c:
+        handler = '''
+        findPreference<androidx.preference.Preference>("lock_providers_key")?.setOnPreferenceClickListener {
+            val act = activity ?: return@setOnPreferenceClickListener false
+            val intent = android.content.Intent(act, com.mts.mtsflix.license.ProviderLockManageActivity::class.java)
+            act.startActivity(intent)
+            true
+        }
+'''
+        anchor = 'for ((key, api) in syncApis) {'
+        if anchor in c:
+            c = c.replace(anchor, handler + '\n        ' + anchor)
+            open(kt_path, 'w', encoding='utf-8').write(c)
+            print('  OK: Lock providers handler patched in SettingsAccount.kt')
+
+# 18c. Patch AppContextUtils.kt loadResult to check PIN for locked providers and auto-resume
+app_ctx_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/utils/AppContextUtils.kt'
+if os.path.exists(app_ctx_path):
+    c = open(app_ctx_path, encoding='utf-8').read()
+    if 'ProviderLockManager' not in c:
+        target = 'fun FragmentActivity.loadResult(\n        url: String,\n        apiName: String,\n        name: String,\n        startAction: Int = 0,\n        startValue: Int = 0\n    ) {'
+        lock_check = '''fun FragmentActivity.loadResult(
+        url: String,
+        apiName: String,
+        name: String,
+        startAction: Int = 0,
+        startValue: Int = 0
+    ) {
+        if (com.mts.mtsflix.license.ProviderLockManager.requiresPin(this, apiName)) {
+            val intent = android.content.Intent(this, com.mts.mtsflix.license.ProviderLockPinActivity::class.java).apply {
+                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_MODE, com.mts.mtsflix.license.ProviderLockPinActivity.MODE_VERIFY_PROVIDER)
+                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_PROVIDER_NAME, apiName)
+                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_TARGET_URL, url)
+                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_TARGET_NAME, name)
+                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_TARGET_START_ACTION, startAction)
+                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_TARGET_START_VALUE, startValue)
+            }
+            startActivity(intent)
+            return
+        }'''
+        if target in c:
+            c = c.replace(target, lock_check)
+            open(app_ctx_path, 'w', encoding='utf-8').write(c)
+            print('  OK: loadResult patched with Provider PIN check & auto-resume in AppContextUtils.kt')
+
+# 18d. Patch HomeFragment.kt provider list selection to check PIN
+home_frag_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/home/HomeFragment.kt'
+if os.path.exists(home_frag_path):
+    c = open(home_frag_path, encoding='utf-8').read()
+    target_hf = 'currentApiName = currentValidApis[i].name\n                        //to switch to apply simply remove this\n                        currentApiName.let(callback)\n                        dialog.dismissSafe()'
+    replacement_hf = '''val targetApi = currentValidApis[i].name
+                        val ctx = dialog.context
+                        if (com.mts.mtsflix.license.ProviderLockManager.requiresPin(ctx, targetApi)) {
+                            val intent = android.content.Intent(ctx, com.mts.mtsflix.license.ProviderLockPinActivity::class.java).apply {
+                                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_MODE, com.mts.mtsflix.license.ProviderLockPinActivity.MODE_VERIFY_PROVIDER)
+                                putExtra(com.mts.mtsflix.license.ProviderLockPinActivity.EXTRA_PROVIDER_NAME, targetApi)
+                            }
+                            ctx.startActivity(intent)
+                            dialog.dismissSafe()
+                            return@setOnItemClickListener
+                        }
+                        currentApiName = targetApi
+                        currentApiName.let(callback)
+                        dialog.dismissSafe()'''
+    if target_hf in c and 'ProviderLockManager' not in c:
+        c = c.replace(target_hf, replacement_hf)
+        open(home_frag_path, 'w', encoding='utf-8').write(c)
+        print('  OK: HomeFragment provider selection patched with Provider PIN check')
+
+# 18e. Clear session locks when MainActivity stops (app backgrounded or exited)
+path_ma = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/MainActivity.kt'
+if os.path.exists(path_ma):
+    c_ma = open(path_ma, encoding='utf-8').read()
+    if 'ProviderLockManager.clearSessionLocks()' not in c_ma:
+        if 'override fun onStop() {' in c_ma:
+            c_ma = c_ma.replace('override fun onStop() {', 'override fun onStop() {\n        com.mts.mtsflix.license.ProviderLockManager.clearSessionLocks()')
+            open(path_ma, 'w', encoding='utf-8').write(c_ma)
+            print('  OK: MainActivity.onStop patched to clear session PIN locks on exit')
+PYEOF
+
+# ============================================================
+# --- v1.1.5 Features (Steps 19-24) -------------------------
+# ============================================================
+
+echo "[v1.1.5 Step 19] Auto-Select Fastest Server + settings preferences..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR', 'cloudstream')
+
+# 19a. Add settings preferences for Speed Test and Auto-Skip and Watchlist
+prefs_path = cs_dir + '/app/src/main/res/xml/settings_account.xml'
+if os.path.exists(prefs_path):
+    c = open(prefs_path, encoding='utf-8').read()
+    mtsflix_prefs = '''
+    <!-- MTSFlix v1.1.5 Feature Settings -->
+    <PreferenceCategory
+        android:title="MTSFlix — Ciri Eksklusif">
+
+        <SwitchPreference
+            android:key="mtsflix_auto_speed_test"
+            android:title="⚡ Auto-Pilih Pelayan Terpantas"
+            android:summary="Uji kelajuan pelayan video dan pilih yang terpantas secara automatik"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="mtsflix_auto_skip_intro"
+            android:title="🍿 Auto-Skip Intro"
+            android:summary="Lompat bahagian intro episod secara automatik (2 minit pertama)"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="mtsflix_auto_next_ep"
+            android:title="▶ Auto-Main Episod Seterusnya"
+            android:summary="Paparkan countdown dan main episod berikutnya secara automatik"
+            android:defaultValue="true" />
+
+        <Preference
+            android:key="mtsflix_theme_picker_key"
+            android:title="🎨 Tema Warna Aplikasi"
+            android:summary="Pilih tema warna UI — Netflix Red, Disney+ Blue, HBO Purple, VIP Gold" />
+
+        <Preference
+            android:key="mtsflix_device_manage_key"
+            android:title="🛡️ Urus Peranti Anda"
+            android:summary="Lihat dan log keluar peranti yang berdaftar dengan akaun Google anda" />
+
+        <Preference
+            android:key="mtsflix_watchlist_key"
+            android:title="🔔 Senarai Tonton &amp; Notifikasi"
+            android:summary="Urus sejarah tontonan, pilih jenis notifikasi &amp; provider yang ingin dimaklumkan" />
+
+    </PreferenceCategory>
+
+    <!-- MTSFlix v1.1.5: Content Discovery Notifications -->
+    <PreferenceCategory
+        android:title="MTSFlix — Notifikasi Kandungan Baru">
+
+        <SwitchPreference
+            android:key="mtsflix_notif_new_episodes"
+            android:title="🔔 Episod Baru"
+            android:summary="Notifikasi apabila episod baru keluar untuk show yang anda tonton"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="mtsflix_notif_new_movies"
+            android:title="🎬 Filem Baru Ditambah"
+            android:summary="Notifikasi apabila filem baru ditambah ke mana-mana provider"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="mtsflix_notif_new_series"
+            android:title="📺 Siri TV Baru Ditambah"
+            android:summary="Notifikasi apabila siri TV baru muncul di provider anda"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="mtsflix_notif_new_anime"
+            android:title="🇯🇵 Anime Baru Ditambah"
+            android:summary="Notifikasi untuk anime baru Jepun, OVA, dan anime movie"
+            android:defaultValue="true" />
+
+        <SwitchPreference
+            android:key="mtsflix_notif_new_asian"
+            android:title="🇨🇳 Drama Asia / China Baru"
+            android:summary="Notifikasi untuk drama Asia, drama China, K-drama baru"
+            android:defaultValue="true" />
+
+    </PreferenceCategory>'''
+
+    if 'mtsflix_auto_speed_test' not in c:
+        c = c.replace('</PreferenceScreen>', mtsflix_prefs + '\n</PreferenceScreen>')
+        open(prefs_path, 'w', encoding='utf-8').write(c)
+        print('  OK: MTSFlix v1.1.5 preferences added to settings_account.xml')
+PYEOF
+
+echo "[v1.1.5 Step 20] Theme Picker — patch MainActivity + LicenseCheckActivity..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR', 'cloudstream')
+
+# 20a. Patch MainActivity.onCreate to apply theme
+path_ma = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/MainActivity.kt'
+if os.path.exists(path_ma):
+    c = open(path_ma, encoding='utf-8').read()
+    if 'MTSFlixThemeManager' not in c:
+        c = c.replace(
+            'override fun onResume() {',
+            '''override fun onResume() {
+        com.mts.mtsflix.theme.MTSFlixThemeManager.applyToWindow(this)'''
+        )
+        # Also clear session locks on onPause (app goes background)
+        if 'ProviderLockManager.clearSessionLocks()' not in c:
+            c = c.replace(
+                'override fun onPause() {\n        super.onPause()',
+                'override fun onPause() {\n        super.onPause()\n        com.mts.mtsflix.license.ProviderLockManager.clearSessionLocks()'
+            )
+        open(path_ma, 'w', encoding='utf-8').write(c)
+        print('  OK: MainActivity patched for theme apply and session lock clear on onPause')
+
+# 20b. Patch SettingsAccount.kt for theme picker, device manager, watchlist preferences
+kt_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/settings/SettingsAccount.kt'
+if os.path.exists(kt_path):
+    c = open(kt_path, encoding='utf-8').read()
+    if 'mtsflix_theme_picker_key' not in c:
+        handler = '''
+        findPreference<androidx.preference.Preference>("mtsflix_theme_picker_key")?.setOnPreferenceClickListener {
+            startActivity(android.content.Intent(activity, com.mts.mtsflix.theme.ThemePickerActivity::class.java))
+            true
+        }
+        findPreference<androidx.preference.Preference>("mtsflix_device_manage_key")?.setOnPreferenceClickListener {
+            startActivity(android.content.Intent(activity, com.mts.mtsflix.license.DeviceManageActivity::class.java))
+            true
+        }
+        findPreference<androidx.preference.Preference>("mtsflix_watchlist_key")?.setOnPreferenceClickListener {
+            startActivity(android.content.Intent(activity, com.mts.mtsflix.watchlist.WatchlistActivity::class.java))
+            true
+        }
+'''
+        anchor = 'for ((key, api) in syncApis) {'
+        if anchor in c:
+            c = c.replace(anchor, handler + '\n        ' + anchor)
+            open(kt_path, 'w', encoding='utf-8').write(c)
+            print('  OK: SettingsAccount.kt patched with theme/device/watchlist handlers')
+PYEOF
+
+echo "[v1.1.5 Step 21] Quick Favorites Provider Bar — patch HomeFragment..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR', 'cloudstream')
+
+home_frag_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/home/HomeFragment.kt'
+if os.path.exists(home_frag_path):
+    c = open(home_frag_path, encoding='utf-8').read()
+    if 'FavoritesManager' not in c:
+        # Find onCreateView or similar place to inject favorites bar injection call
+        # We patch the provider selection long-click to add to favorites
+        target_selection = 'currentApiName.let(callback)\n                        dialog.dismissSafe()'
+        fav_patch = '''currentApiName.let(callback)
+                        dialog.dismissSafe()'''
+
+        # Patch ListView item long-click (inside provider dropdown dialog) for favorites toggle
+        longclick_target = 'listView.setOnItemClickListener'
+        longclick_patch = '''listView.setOnItemLongClickListener { _, _, i, _ ->
+                    val favName = currentValidApis[i].name
+                    val ctx = dialog.context
+                    val added = com.mts.mtsflix.home.FavoritesManager.toggleFavorite(ctx, favName)
+                    val msg = if (added) "⭐ $favName ditambah ke Kegemaran!" else "❌ $favName dibuang dari Kegemaran"
+                    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    true
+                }
+                listView.setOnItemClickListener'''
+
+        if longclick_target in c and 'setOnItemLongClickListener' not in c:
+            c = c.replace(longclick_target, longclick_patch)
+            open(home_frag_path, 'w', encoding='utf-8').write(c)
+            print('  OK: HomeFragment patched with long-press to add/remove Provider Favorites')
+PYEOF
+
+echo "[v1.1.5 Step 22] Auto-Skip Intro + Next Episode — patch GeneratorPlayer..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR', 'cloudstream')
+
+player_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/ui/player/GeneratorPlayer.kt'
+if os.path.exists(player_path):
+    c = open(player_path, encoding='utf-8').read()
+    if 'AutoSkipManager' not in c:
+        # Inject AutoSkip listener after player is ready
+        # We look for onResume or observe(viewModel.player) or similar
+        anchor = 'override fun onResume() {'
+        skip_init = '''override fun onResume() {
+        // MTSFlix v1.1.5: Auto-Skip Intro + Next Episode listener
+        val skipHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        val ctx = requireContext()
+        val skipRunnable = object : Runnable {
+            override fun run() {
+                try {
+                    val player = activity?.let { com.lagradost.cloudstream3.ui.player.CS3IPlayer.getPlayer() }
+                    if (player != null) {
+                        val pos = player.currentPositionMs ?: 0L
+                        val dur = player.durationMs ?: 0L
+                        val isEpBased = viewModel.loadedLinks.value?.let { true } ?: false
+
+                        // Auto-Skip Intro
+                        if (com.mts.mtsflix.player.AutoSkipManager.isAutoSkipIntroEnabled(ctx)
+                            && com.mts.mtsflix.player.AutoSkipManager.shouldShowSkipIntro(pos, isEpBased)) {
+                            // Show skip intro button if not already showing
+                            activity?.runOnUiThread {
+                                binding.root.findViewWithTag<android.widget.TextView>("skip_intro_btn")
+                                    ?: run {
+                                        val btn = android.widget.TextView(ctx).apply {
+                                            tag = "skip_intro_btn"
+                                            text = ">> Skip Intro"
+                                            textSize = 15f
+                                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                                            setTextColor(android.graphics.Color.WHITE)
+                                            setBackgroundColor(android.graphics.Color.parseColor("#AA000000"))
+                                            setPadding(32, 12, 32, 12)
+                                            isFocusable = true
+                                            setOnClickListener {
+                                                val skipTo = com.mts.mtsflix.player.AutoSkipManager.getSkipToPosition(pos, dur)
+                                                player.seekTo(skipTo)
+                                                (it.parent as? android.view.ViewGroup)?.removeView(it)
+                                            }
+                                        }
+                                        (binding.root as? android.widget.FrameLayout)?.addView(btn,
+                                            android.widget.FrameLayout.LayoutParams(
+                                                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                                                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                                                android.view.Gravity.BOTTOM or android.view.Gravity.END
+                                            ).also { it.setMargins(0, 0, 80, 160) }
+                                        )
+                                    }
+                            }
+                        } else {
+                            activity?.runOnUiThread {
+                                (binding.root as? android.view.ViewGroup)
+                                    ?.findViewWithTag<android.view.View>("skip_intro_btn")?.let {
+                                        (it.parent as? android.view.ViewGroup)?.removeView(it)
+                                    }
+                            }
+                        }
+
+                        // Auto-Next Episode
+                        val countdown = if (com.mts.mtsflix.player.AutoSkipManager.isAutoNextEpEnabled(ctx))
+                            com.mts.mtsflix.player.AutoSkipManager.getNextEpCountdownSecs(pos, dur)
+                        else null
+                        if (countdown != null && countdown <= com.mts.mtsflix.player.AutoSkipManager.NEXT_EP_COUNTDOWN_SECS) {
+                            activity?.runOnUiThread {
+                                val tag = "next_ep_overlay"
+                                val existing = binding.root.findViewWithTag<android.widget.TextView>(tag)
+                                if (existing != null) {
+                                    existing.text = "▶ Episod Seterusnya dalam ${countdown}s"
+                                } else {
+                                    val overlay = android.widget.TextView(ctx).apply {
+                                        this.tag = tag
+                                        text = "▶ Episod Seterusnya dalam ${countdown}s"
+                                        textSize = 16f
+                                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                                        setTextColor(android.graphics.Color.WHITE)
+                                        setBackgroundColor(android.graphics.Color.parseColor("#CC000000"))
+                                        setPadding(36, 14, 36, 14)
+                                        isFocusable = true
+                                        setOnClickListener {
+                                            viewModel.nextEpisode()
+                                            (it.parent as? android.view.ViewGroup)?.removeView(it)
+                                        }
+                                    }
+                                    (binding.root as? android.widget.FrameLayout)?.addView(overlay,
+                                        android.widget.FrameLayout.LayoutParams(
+                                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                                            android.view.Gravity.BOTTOM or android.view.Gravity.START
+                                        ).also { it.setMargins(80, 0, 0, 160) }
+                                    )
+                                }
+                                if (countdown <= 0) {
+                                    viewModel.nextEpisode()
+                                    (binding.root as? android.view.ViewGroup)?.findViewWithTag<android.view.View>(tag)
+                                        ?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) { /* silent */ }
+                skipHandler.postDelayed(this, 1000)
+            }
+        }
+        skipHandler.postDelayed(skipRunnable, 1000)'''
+
+        if anchor in c:
+            c = c.replace(anchor, skip_init, 1)
+            open(player_path, 'w', encoding='utf-8').write(c)
+            print('  OK: GeneratorPlayer.kt patched with Auto-Skip Intro + Next Episode overlay')
+PYEOF
+
+echo "[v1.1.5 Step 23] Watchlist Worker — register in CloudStreamApp..."
+$PYTHON_BIN - << 'PYEOF'
+import os
+cs_dir = os.environ.get('CS_DIR', 'cloudstream')
+
+# Patch CloudStreamApp.kt to schedule watchlist worker on startup
+app_path = cs_dir + '/app/src/main/java/com/lagradost/cloudstream3/CloudStreamApp.kt'
+if os.path.exists(app_path):
+    c = open(app_path, encoding='utf-8').read()
+    if 'WatchlistNotificationWorker' not in c:
+        anchor = 'super.onCreate()'
+        patch = '''super.onCreate()
+        // MTSFlix v1.1.5: Schedule content discovery & watchlist notification workers
+        try {
+            com.mts.mtsflix.watchlist.WatchlistNotificationWorker.schedulePeriodicCheck(this)
+        } catch (e: Exception) { /* silent */ }
+        try {
+            com.mts.mtsflix.watchlist.ContentDiscoveryWorker.schedulePeriodicCheck(this)
+        } catch (e: Exception) { /* silent */ }'''
+        if anchor in c:
+            c = c.replace(anchor, patch, 1)
+            open(app_path, 'w', encoding='utf-8').write(c)
+            print('  OK: CloudStreamApp.kt patched to schedule both WatchlistNotification & ContentDiscovery workers')
+PYEOF
+
+echo "[v1.1.5 Step 24] Device Management — register Activity + patch TVPairingActivity..."
+$PYTHON_BIN - << 'PYEOF'
+import re, os
+cs_dir = os.environ.get('CS_DIR', 'cloudstream')
+mtsflix_dir = os.environ.get('MTSFLIX_DIR', '.')
+
+# 24a. Register new Activities in AndroidManifest.xml
+path = cs_dir + '/app/src/main/AndroidManifest.xml'
+if os.path.exists(path):
+    c = open(path, encoding='utf-8').read()
+
+    new_activities = ''
+    if 'ThemePickerActivity' not in c:
+        new_activities += '''
+        <!-- MTSFlix v1.1.5: Theme Picker -->
+        <activity
+            android:name="com.mts.mtsflix.theme.ThemePickerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />'''
+
+    if 'DeviceManageActivity' not in c:
+        new_activities += '''
+        <!-- MTSFlix v1.1.5: Device Management -->
+        <activity
+            android:name="com.mts.mtsflix.license.DeviceManageActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />'''
+
+    if 'WatchlistActivity' not in c:
+        new_activities += '''
+        <!-- MTSFlix v1.1.5: Watchlist -->
+        <activity
+            android:name="com.mts.mtsflix.watchlist.WatchlistActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:theme="@style/AppTheme" />'''
+
+    if new_activities:
+        c = c.replace('</application>', new_activities + '\n    </application>')
+        open(path, 'w', encoding='utf-8').write(c)
+        print('  OK: AndroidManifest.xml updated with v1.1.5 activities')
+
+# 24b. Patch TVPairingActivity.onConfirmed to register device
+tv_pair_path = mtsflix_dir + '/custom_src/license/TVPairingActivity.kt'
+if os.path.exists(tv_pair_path):
+    c = open(tv_pair_path, encoding='utf-8').read()
+    if 'DeviceManager.registerDevice' not in c:
+        anchor = 'try { com.mts.mtsflix.cloud.MTSFlixCloudSync.restoreWatchHistory(this, email) } catch (e: Exception) {}'
+        patch = '''try { com.mts.mtsflix.cloud.MTSFlixCloudSync.restoreWatchHistory(this, email) } catch (e: Exception) {}
+                        try { com.mts.mtsflix.license.DeviceManager.registerDevice(this, email) } catch (e: Exception) {}'''
+        if anchor in c:
+            c = c.replace(anchor, patch)
+            open(tv_pair_path, 'w', encoding='utf-8').write(c)
+            print('  OK: TVPairingActivity.kt patched to register device on Google login')
+PYEOF
+
+echo "======================================================"
+echo "    MTSFlix Customization Complete! v1.1.6"
+echo ""
+echo "    v1.1.4 Features:"
+echo "    Provider Lock PIN + Confirmation + Old PIN check"
+echo "    Auto-resume after PIN + App exit resets session"
+echo "    Google Account Backup/Restore PIN + Locked Providers"
+echo "    Reload Extensions Button in Account & Security"
+echo ""
+echo "    v1.1.5 NEW Features:"
+echo "    ⚡ Auto-Select Fastest Server (Speed Test)"
+echo "    🎨 UI Theme Color Picker (4 themes)"
+echo "    ⭐ Quick Favorites Provider Bar (long-press)"
+echo "    🍿 Auto-Skip Intro + Auto-Next Episode"
+echo "    🔔 Watchlist Episode Notifications (every 6h)"
+echo "    🛡️ Remote Device Management (revoke sessions)"
+echo ""
+echo "    v1.1.6 NEW Features:"
+echo "    [+] Smart Watch History Restore & Deduplication"
+echo "    [+] Smart Cloud Merge Sync (Never overwrites with empty)"
+echo "    [+] Instant UI Reload on Restore"
+echo "    [+] Android SDK CI Compatibility Fix"
 echo "======================================================"

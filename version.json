@@ -1,11 +1,11 @@
 {
-  "version": "1.0.7",
-  "versionCode": 2,
-  "downloadUrl": "https://github.com/muhamadakmal854-svg/MTSFlix/releases/download/v1.0.7/MTSFlix-v1.0.7.apk",
-  "releaseNotes": "MTSFlix v1.0.7 - Pemilihan Provider & Tapisan 18+ Automatik",
+  "version": "2.0.0",
+  "versionCode": 7,
+  "downloadUrl": "https://github.com/muhamadakmal854-svg/PencariMovie/releases/download/v2.0.0/PencariMovie-v2.0.0.apk",
+  "releaseNotes": "PENCARIMOVIE v2.0.0 — Enjin Penstriman Rust Terbina Dalam (Port 8088 Tanpa Companion APK), 1 Provider Eksklusif PencariMovie & Penjenamaan Penuh Baharu",
   "mandatory": false,
   "sha256": "",
-  "publishedAt": "2026-07-25T23:14:00Z",
+  "publishedAt": "2026-11-04T15:00:00Z",
   "minAndroid": 21,
-  "providerUrl": "https://cdn.jsdelivr.net/gh/muhamadakmal854-svg/Provider@builds/repo.json"
+  "providerUrl": ""
 }

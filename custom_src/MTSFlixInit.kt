@@ -5,12 +5,12 @@ import android.util.Log
 import androidx.preference.PreferenceManager
 
 /**
- * MTSFlix App Initializer
- * Call MTSFlixInit.initialize(context) from LicenseCheckActivity
+ * PencariMovie App Initializer
+ * Call MTSFlixInit.initialize(context) from LicenseCheckActivity / CloudStreamApp
  */
 object MTSFlixInit {
 
-    private const val TAG = "MTSFlix:Init"
+    private const val TAG = "PencariMovie:Init"
     private var initialized = false
 
     fun initialize(context: Context) {
@@ -21,7 +21,7 @@ object MTSFlixInit {
         MTSFlixLogger.init(context)
 
         MTSFlixLogger.log("SYSTEM", "=======================================")
-        MTSFlixLogger.log("SYSTEM", "   MTSFlix Initializing...")
+        MTSFlixLogger.log("SYSTEM", "   PENCARIMOVIE Initializing...")
         MTSFlixLogger.log("SYSTEM", "=======================================")
 
         // Mark CloudStream setup as complete so MainActivity goes straight to Home
@@ -32,7 +32,20 @@ object MTSFlixInit {
             MTSFlixLogger.log("SYSTEM", "Setup mark error: ${e.message}")
         }
 
-        MTSFlixLogger.log("SYSTEM", "✅ MTSFlix initialized successfully")
+        // Auto-start PencariMovie Local Rust Streaming Server on Port 8088
+        try {
+            com.mts.pencarimovie.PencariMovieLocalServerService.start(context)
+            MTSFlixLogger.log("SYSTEM", "✅ PencariMovie Local Streaming Server (Port 8088) started")
+        } catch (e: Exception) {
+            try {
+                com.mts.pencarimovie.PencariMovieServerManager.startServerAsync(context)
+                MTSFlixLogger.log("SYSTEM", "✅ PencariMovie Server started via ServerManager fallback")
+            } catch (err: Exception) {
+                MTSFlixLogger.log("SYSTEM", "Server start error: ${err.message}")
+            }
+        }
+
+        MTSFlixLogger.log("SYSTEM", "✅ PENCARIMOVIE initialized successfully")
     }
 
     private fun markSetupComplete(context: Context) {
@@ -41,13 +54,18 @@ object MTSFlixInit {
             context.getSharedPreferences("rebuild_preference", Context.MODE_PRIVATE)
                 .edit().putString(key, "true").apply()
         } catch (e: Exception) {
-            Log.w("MTSFlix", "markSetupComplete rebuild_preference: ${e.message}")
+            Log.w("PencariMovie", "markSetupComplete rebuild_preference: ${e.message}")
         }
         try {
             PreferenceManager.getDefaultSharedPreferences(context)
                 .edit().putString(key, "true").apply()
         } catch (e: Exception) {
-            Log.w("MTSFlix", "markSetupComplete defaultPrefs: ${e.message}")
+            Log.w("PencariMovie", "markSetupComplete defaultPrefs: ${e.message}")
+        }
+        try {
+            com.lagradost.cloudstream3.CloudStreamApp.setKey(key, true)
+        } catch (e: Exception) {
+            Log.w("PencariMovie", "markSetupComplete CloudStreamApp.setKey: ${e.message}")
         }
     }
 

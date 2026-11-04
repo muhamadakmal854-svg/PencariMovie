@@ -12,8 +12,8 @@ if sys.platform == "win32" and getattr(sys.stdout, 'encoding', '').lower() != 'u
 
 """
 ╔══════════════════════════════════════════════════════════╗
-║          MTSFlix Master Control Script v3.0             ║
-║  Pengurusan penuh aplikasi MTSFlix dalam Python         ║
+║          PencariMovie Master Control Script v4.0             ║
+║  Pengurusan penuh aplikasi PencariMovie dalam Python         ║
 ╠══════════════════════════════════════════════════════════╣
 ║  Cara guna:                                             ║
 ║    python master.py          → Menu interaktif          ║
@@ -142,7 +142,7 @@ class LicenseManager:
         if not LICENSE_FILE.exists():
             data = {
                 "version": 1,
-                "description": "MTSFlix Device License Registry",
+                "description": "PencariMovie Device License Registry",
                 "lastUpdated": date.today().strftime("%Y-%m-%d"),
                 "licenses": []
             }
@@ -196,7 +196,7 @@ class LicenseManager:
             if licenses:
                 data = {
                     "version": 1,
-                    "description": "MTSFlix Device License Registry",
+                    "description": "PencariMovie Device License Registry",
                     "lastUpdated": date.today().strftime("%Y-%m-%d"),
                     "licenses": licenses
                 }
@@ -209,7 +209,7 @@ class LicenseManager:
         # 4. Template asas jika semua gagal
         data = {
             "version": 1,
-            "description": "MTSFlix Device License Registry",
+            "description": "PencariMovie Device License Registry",
             "lastUpdated": date.today().strftime("%Y-%m-%d"),
             "licenses": []
         }
@@ -331,7 +331,7 @@ class LicenseManager:
 
     # ── GANTUNG LESEN (BAN) ───────────────────────────────────────────────
     @classmethod
-    def ban(cls, code: str, reason: str = "Digantung oleh admin MTSFlix") -> bool:
+    def ban(cls, code: str, reason: str = "Digantung oleh admin PencariMovie") -> bool:
         code = code.upper()
         data = cls._load()
         entry = next((l for l in data["licenses"] if l.get("deviceCode") == code), None)
@@ -568,7 +568,7 @@ class LicenseManager:
                 suspend += 1
 
         print()
-        cprint("  === Statistik Lesen MTSFlix ===", C.BOLD)
+        cprint("  === Statistik Lesen PencariMovie ===", C.BOLD)
         print(f"  Database   : {data.get('description','MTSFlix Registry')}")
         print(f"  Kemaskini  : {data.get('lastUpdated','?')}")
         print()
@@ -730,7 +730,7 @@ class GitHubManager:
             "ref": Config.get("branch","main"),
             "inputs": {
                 "version_name":    version,
-                "release_notes":   release_notes or f"MTSFlix v{version}",
+                "release_notes":   release_notes or f"PencariMovie v{version}",
                 "mandatory_update": str(mandatory).lower(),
                 "create_release":   str(create_release).lower()
             }
@@ -739,7 +739,7 @@ class GitHubManager:
             "Authorization": f"token {token}",
             "Content-Type":  "application/json",
             "Accept":        "application/vnd.github.v3+json",
-            "User-Agent":    "MTSFlix-Master/3.0"
+            "User-Agent":    "PencariMovie-Master/4.0"
         }
 
         try:
@@ -787,8 +787,8 @@ class GitHubManager:
             data.update({
                 "version":      version,
                 "versionCode":  new_code,
-                "downloadUrl":  f"https://github.com/{repo}/releases/download/v{version}/MTSFlix-v{version}.apk",
-                "releaseNotes": release_notes or f"MTSFlix v{version}",
+                "downloadUrl":  f"https://github.com/{repo}/releases/download/v{version}/PencariMovie-v{version}.apk",
+                "releaseNotes": release_notes or f"PencariMovie v{version}",
                 "mandatory":    mandatory,
                 "sha256":       "",
                 "publishedAt":  datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -854,7 +854,7 @@ def clear_screen():
 
 def print_header(subtitle: str = ""):
     cprint("=" * 60, C.RED)
-    cprint("     MTSFlix Master Control v3.0", C.WHITE + C.BOLD)
+    cprint("     PencariMovie Master Control v4.0", C.WHITE + C.BOLD)
     if subtitle:
         cprint(f"     {subtitle}", C.CYAN)
     cprint("=" * 60, C.RED)
@@ -905,7 +905,7 @@ def menu_add():
         err("Email tidak boleh kosong.")
         press_enter(); return
 
-    print(f"  {C.GRAY}(Kod diambil dari skrin pengesahan dalam app MTSFlix){C.NC}")
+    print(f"  {C.GRAY}(Kod diambil dari skrin pengesahan dalam app PencariMovie){C.NC}")
     code = input_field("Kod Peranti (MTSF-XXXX-XXXX-XXXX)").upper()
     if not validate_code(code):
         err("Format kod tidak sah. Sepatutnya: MTSF-XXXX-XXXX-XXXX")
@@ -976,7 +976,7 @@ def menu_ban():
 
     LicenseManager.info(code)
     print()
-    reason = input_field("Sebab penggantungan", "Melanggar syarat penggunaan MTSFlix")
+    reason = input_field("Sebab penggantungan", "Melanggar syarat penggunaan PencariMovie")
 
     success = LicenseManager.ban(code, reason)
     if success:
@@ -1064,7 +1064,7 @@ def menu_check():
     clear_screen()
     print_header("Simulasi Semakan App")
 
-    info("Simulasi yang sama dilakukan oleh app MTSFlix semasa dibuka.")
+    info("Simulasi yang sama dilakukan oleh app PencariMovie semasa dibuka.")
     print()
     code = input_field("Kod Peranti untuk disemak").upper()
     if not validate_code(code):
@@ -1136,7 +1136,7 @@ def menu_build():
     print()
 
     version = input_field("Versi APK baru (contoh: 1.2.0)", current_ver)
-    notes   = input_field("Release notes (penerangan update)", f"MTSFlix v{version}")
+    notes   = input_field("Release notes (penerangan update)", f"PencariMovie v{version}")
     mandatory_ans = input("  Wajib update? pengguna mesti update? (y/N): ").strip().lower()
     mandatory     = mandatory_ans == 'y'
     release_ans   = input("  Buat GitHub Release? (Y/n): ").strip().lower()
@@ -1177,7 +1177,7 @@ def menu_update_url():
     current = Config.get("provider_url","")
     info(f"URL semasa: {current}")
     print()
-    info("URL ini digunakan oleh semua pengguna MTSFlix untuk download extension provider.")
+    info("URL ini digunakan oleh semua pengguna PencariMovie untuk download extension provider.")
     info("PERUBAHAN URL MEMERLUKAN APK BARU (rebuild app).")
     print()
 
@@ -1254,7 +1254,7 @@ def menu_stats():
 def menu_settings():
     while True:
         clear_screen()
-        print_header("Tetapan MTSFlix Master")
+        print_header("Tetapan PencariMovie Master")
 
         token = Config.get("github_token","")
         tok_disp = f"...{token[-6:]}" if len(token) > 6 else ("(belum set)" if not token else "***")
@@ -1470,7 +1470,7 @@ def cli_mode(args: List[str]):
 
     elif cmd == "build":
         version = rest[0] if rest else input("  Versi (contoh: 1.2.0): ").strip()
-        notes   = " ".join(rest[1:]) if len(rest) > 1 else f"MTSFlix v{version}"
+        notes   = " ".join(rest[1:]) if len(rest) > 1 else f"PencariMovie v{version}"
         r = GitHubManager.trigger_build(version, notes)
         if r:
             GitHubManager.update_version_json(version, notes)

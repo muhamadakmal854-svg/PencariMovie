@@ -1,4 +1,4 @@
-name: 🎬 MTSFlix Release Build
+name: 🎬 PencariMovie Release Build
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,7 +22,7 @@ on:
       release_notes:
         description: 'Release notes / changelog'
         required: false
-        default: 'Update MTSFlix'
+        default: 'Update PencariMovie'
       mandatory_update:
         description: 'Force update (mandatory)?'
         required: false
@@ -39,20 +39,20 @@ permissions:
 
 env:
   APP_PACKAGE: com.mts.mtsflix
-  APP_NAME: MTSFlix
+  APP_NAME: PENCARIMOVIE
   CLOUDSTREAM_REPO: recloudstream/cloudstream
   PROVIDER_URL: https://cdn.jsdelivr.net/gh/muhamadakmal854-svg/Provider@builds/repo.json
-  LICENSE_URL: https://raw.githubusercontent.com/muhamadakmal854-svg/MTSFlix/main/licenses.json
-  VERSION_URL: https://raw.githubusercontent.com/muhamadakmal854-svg/MTSFlix/main/version.json
+  LICENSE_URL: https://raw.githubusercontent.com/muhamadakmal854-svg/PencariMovie/main/licenses.json
+  VERSION_URL: https://raw.githubusercontent.com/muhamadakmal854-svg/PencariMovie/main/version.json
 
 jobs:
   build:
-    name: Build MTSFlix APK
+    name: Build PencariMovie APK
     runs-on: ubuntu-latest
 
     steps:
       # ─── Setup ────────────────────────────────────────────────────────────
-      - name: 📥 Checkout MTSFlix Repo
+      - name: 📥 Checkout PencariMovie Repo
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -111,8 +111,8 @@ jobs:
           EOF
           fi
 
-      # ─── Apply MTSFlix Customizations ─────────────────────────────────────
-      - name: 🎨 Apply MTSFlix Customizations
+      # ─── Apply PencariMovie Customizations ─────────────────────────────────────
+      - name: 🎨 Apply PencariMovie Customizations
         run: |
           chmod +x customizations/apply.sh
           bash customizations/apply.sh
@@ -149,27 +149,30 @@ jobs:
         run: |
           chmod +x gradlew
           if [ "$HAS_KEYSTORE" = "true" ]; then
-            ./gradlew assembleRelease \
+            ./gradlew assembleStableRelease \
               -Pandroid.injected.signing.store.file="$HOME/keystore/mtsflix.jks" \
               -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" \
               -Pandroid.injected.signing.key.alias="${{ secrets.KEY_ALIAS }}" \
               -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}" \
-              --no-daemon --stacktrace
+              --no-daemon --stacktrace || ./gradlew assembleRelease --no-daemon --stacktrace
           else
-            ./gradlew assembleRelease --no-daemon --stacktrace
+            ./gradlew assembleStableRelease --no-daemon --stacktrace || ./gradlew assembleRelease --no-daemon --stacktrace
           fi
 
       # ─── Collect & Rename APK ─────────────────────────────────────────────
       - name: 📦 Prepare APK
         run: |
           mkdir -p release_output
-          APK=$(find cloudstream/app/build/outputs/apk -name '*.apk' | head -1)
+          APK=$(find cloudstream/app/build/outputs/apk -name '*stable*.apk' 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find cloudstream/app/build/outputs/apk -name '*.apk' 2>/dev/null | head -1)
+          fi
           if [ -z "$APK" ]; then
             echo "❌ APK not found!"
             find cloudstream/app/build -name '*.apk' 2>/dev/null
             exit 1
           fi
-          DEST="release_output/MTSFlix-v${{ env.VER }}.apk"
+          DEST="release_output/PencariMovie-v${{ env.VER }}.apk"
           cp "$APK" "$DEST"
           SIZE=$(du -h "$DEST" | cut -f1)
           echo "APK_PATH=$DEST" >> $GITHUB_ENV
@@ -185,7 +188,7 @@ jobs:
       - name: 📄 Update version.json
         run: |
           RELEASE_NOTES="${{ github.event.inputs.release_notes }}"
-          [ -z "$RELEASE_NOTES" ] && RELEASE_NOTES="MTSFlix v${{ env.VER }}"
+          [ -z "$RELEASE_NOTES" ] && RELEASE_NOTES="PencariMovie v${{ env.VER }}"
           MANDATORY="${{ github.event.inputs.mandatory_update }}"
           [ -z "$MANDATORY" ] && MANDATORY="false"
           REPO="${{ github.repository }}"
@@ -200,15 +203,15 @@ jobs:
           
           ver = os.environ.get('VER', '1.0.0')
           run_num = int(os.environ.get('RUN_NUM', '1'))
-          repo = os.environ.get('REPO', 'muhamadakmal854-svg/MTSFlix')
+          repo = os.environ.get('REPO', 'muhamadakmal854-svg/PencariMovie')
           sha256 = os.environ.get('SHA256', '')
-          release_notes = os.environ.get('RELEASE_NOTES', f'MTSFlix v{ver}')
+          release_notes = os.environ.get('RELEASE_NOTES', f'PencariMovie v{ver}')
           mandatory = os.environ.get('MANDATORY', 'false').lower() == 'true'
           
           data = {
               "version": ver,
               "versionCode": run_num,
-              "downloadUrl": f"https://github.com/{repo}/releases/download/v{ver}/MTSFlix-v{ver}.apk",
+              "downloadUrl": f"https://github.com/{repo}/releases/download/v{ver}/PencariMovie-v{ver}.apk",
               "releaseNotes": release_notes,
               "mandatory": mandatory,
               "sha256": sha256,
@@ -245,7 +248,7 @@ jobs:
       - name: 📤 Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MTSFlix-v${{ env.VER }}
+          name: PencariMovie-v${{ env.VER }}
           path: release_output/*.apk
           retention-days: 30
 
@@ -257,38 +260,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VER }}
-          name: "🎬 MTSFlix v${{ env.VER }}"
-          body: |
-            ## 🎬 MTSFlix v${{ env.VER }}
-
-            ${{ github.event.inputs.release_notes || 'Update MTSFlix' }}
-
-            ---
-
-            ### 📥 Cara Install / Update
-            1. Download **MTSFlix-v${{ env.VER }}.apk** di bawah
-            2. App akan **auto-detect** update dan tawarkan download bila buka MTSFlix
-            3. Atau install manual — **data tidak akan hilang** (sama signing key)
-
-            ### ✅ Ciri-Ciri
-            - 🔐 Pengesahan peranti (kod unik setiap device)
-            - 🔑 Login Google — sync watchlist & sejarah
-            - 🔔 Notifikasi episod baru
-            - 🔌 Provider MTS auto-sync (tiada reinstall perlu)
-            - 📥 Auto-update APK dalam app
-            - 🚫 Tiada iklan
-
-            ---
-
-            | Info | Nilai |
-            |------|-------|
-            | Versi | `v${{ env.VER }}` |
-            | Saiz | `${{ env.APK_SIZE }}` |
-            | SHA256 | `${{ env.APK_SHA256 }}` |
-            | Build | `#${{ github.run_number }}` |
-            | Commit | `${{ github.sha }}` |
-
-            > 🤖 Built automatically by GitHub Actions
+          name: "PencariMovie v${{ env.VER }}"
+          body: ${{ github.event.inputs.release_notes || 'Kemas kini PencariMovie' }}
           files: release_output/*.apk
           draft: false
           prerelease: false

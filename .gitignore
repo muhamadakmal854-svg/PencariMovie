@@ -9,6 +9,11 @@ keystore-secrets.txt
 build/
 .gradle/
 local.properties
+*.apk
+logo_pencarimovie.png
+
+# Native binary cache (auto-downloaded/managed in build)
+customizations/jniLibs/
 
 # Logs
 *.log
