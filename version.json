@@ -1,11 +1,11 @@
 {
-  "version": "2.0.0",
-  "versionCode": 7,
-  "downloadUrl": "https://github.com/muhamadakmal854-svg/PencariMovie/releases/download/v2.0.0/PencariMovie-v2.0.0.apk",
-  "releaseNotes": "PENCARIMOVIE v2.0.0 — Enjin Penstriman Rust Terbina Dalam (Port 8088 Tanpa Companion APK), 1 Provider Eksklusif PencariMovie & Penjenamaan Penuh Baharu",
+  "version": "2.0.1",
+  "versionCode": 1,
+  "downloadUrl": "https://github.com/muhamadakmal854-svg/PencariMovie/releases/download/v2.0.1/PencariMovie-v2.0.1.apk",
+  "releaseNotes": "PencariMovie v2.0.1",
   "mandatory": false,
   "sha256": "",
-  "publishedAt": "2026-11-04T15:00:00Z",
+  "publishedAt": "2026-11-04T08:11:59Z",
   "minAndroid": 21,
-  "providerUrl": ""
+  "providerUrl": "https://cdn.jsdelivr.net/gh/muhamadakmal854-svg/Provider@builds/repo.json"
 }
