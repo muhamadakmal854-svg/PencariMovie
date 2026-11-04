@@ -105,7 +105,7 @@ class PencariMovieLocalServerService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("PencariMovie Enjin Penstriman")
             .setContentText(text)
-            .setSmallIcon(R.drawable.ic_player_play)
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

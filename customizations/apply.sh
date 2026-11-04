@@ -383,7 +383,7 @@ if os.path.exists(main_path):
                 com.lagradost.cloudstream3.APIHolder.allProviders.clear()
                 com.lagradost.cloudstream3.APIHolder.allProviders.add(pm)
             }
-            com.lagradost.cloudstream3.MainAPI.apis = com.lagradost.cloudstream3.utils.Coroutines.atomicListOf(pm)
+            com.lagradost.cloudstream3.APIHolder.apis = com.lagradost.cloudstream3.utils.Coroutines.atomicListOf(pm)
             com.lagradost.cloudstream3.APIHolder.apiMap = mapOf(pm.name to 0)
         } catch (_: Exception) {}
     }
@@ -402,7 +402,7 @@ if os.path.exists(main_path):
                         com.lagradost.cloudstream3.APIHolder.allProviders.clear()
                         com.lagradost.cloudstream3.APIHolder.allProviders.add(pmProvider)
                     }
-                    com.lagradost.cloudstream3.MainAPI.apis = com.lagradost.cloudstream3.utils.Coroutines.atomicListOf(pmProvider)
+                    com.lagradost.cloudstream3.APIHolder.apis = com.lagradost.cloudstream3.utils.Coroutines.atomicListOf(pmProvider)
                     com.lagradost.cloudstream3.APIHolder.apiMap = mapOf(pmProvider.name to 0)
                 } catch (e: Exception) {
                     android.util.Log.e("PencariMovie", "Provider init error: ${e.message}")
@@ -674,10 +674,16 @@ mkdir -p "$TARGET_PKG"
 mkdir -p "$TARGET_PM"
 
 if [ -d "$CUSTOM_SRC" ]; then
-  cp -r "$CUSTOM_SRC/"* "$TARGET_PKG/" 2>/dev/null || true
+  for item in "$CUSTOM_SRC"/*; do
+    basename_item=$(basename "$item")
+    if [ "$basename_item" != "pencarimovie" ]; then
+      cp -r "$item" "$TARGET_PKG/" 2>/dev/null || true
+    fi
+  done
   if [ -d "$CUSTOM_SRC/pencarimovie" ]; then
     cp -r "$CUSTOM_SRC/pencarimovie/"* "$TARGET_PM/" 2>/dev/null || true
   fi
+  rm -rf "$TARGET_PKG/pencarimovie" 2>/dev/null || true
 fi
 
 # --- 11. Patch AndroidManifest: LicenseCheckActivity as LAUNCHER -----------
@@ -1430,10 +1436,7 @@ if os.path.exists(kt_path):
             startActivity(android.content.Intent(activity, com.mts.mtsflix.license.DeviceManageActivity::class.java))
             true
         }
-        findPreference<androidx.preference.Preference>("mtsflix_watchlist_key")?.setOnPreferenceClickListener {
-            startActivity(android.content.Intent(activity, com.mts.mtsflix.watchlist.WatchlistActivity::class.java))
-            true
-        }
+
 '''
         anchor = 'for ((key, api) in syncApis) {'
         if anchor in c:
@@ -1609,9 +1612,7 @@ if os.path.exists(app_path):
         try {
             com.mts.mtsflix.watchlist.WatchlistNotificationWorker.schedulePeriodicCheck(this)
         } catch (e: Exception) { /* silent */ }
-        try {
-            com.mts.mtsflix.watchlist.ContentDiscoveryWorker.schedulePeriodicCheck(this)
-        } catch (e: Exception) { /* silent */ }'''
+'''
         if anchor in c:
             c = c.replace(anchor, patch, 1)
             open(app_path, 'w', encoding='utf-8').write(c)
